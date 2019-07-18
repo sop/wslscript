@@ -1,0 +1,22 @@
+[package]
+name = "wslscript"
+description = "Shell script handler for WSL"
+version = "0.1.0"
+authors = ["Joni Eskelinen <jonieske@gmail.com>"]
+edition = "2018"
+
+[dependencies]
+failure = "^0.1.5"
+num-derive = "^0.2.5"
+num-traits = "^0.2.8"
+
+[dependencies.winapi]
+version = "^0.3.7"
+features = ["winuser", "winbase", "errhandlingapi"]
+
+[dependencies.winreg]
+version = "^0.6.0"
+features = ["transactions"]
+
+[build-dependencies]
+winres = "^0.1.11"
