@@ -1,6 +1,7 @@
 use std::convert::From;
 use std::ffi::{OsStr, OsString};
 use std::iter::once;
+use std::ops::{Deref, DerefMut};
 use std::os::windows::ffi::{OsStrExt, OsStringExt};
 
 pub fn error_message(msg: WideString) {
@@ -21,13 +22,22 @@ pub struct WideString {
 }
 
 impl WideString {
-    pub fn as_ptr(&self) -> *const u16 {
-        self.words.as_ptr()
-    }
-
     pub fn to_string(&self) -> String {
         let s: OsString = OsStringExt::from_wide(self.words.as_slice());
         s.to_string_lossy().to_string()
+    }
+}
+
+impl Deref for WideString {
+    type Target = Vec<u16>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.words
+    }
+}
+impl DerefMut for WideString {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.words
     }
 }
 

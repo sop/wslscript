@@ -9,8 +9,15 @@ const CLASSES_SUBKEY: &str = "Software\\Classes";
 
 /// Registers WSL Script as a handler for given file extension.
 ///
+/// See https://docs.microsoft.com/en-us/windows/win32/shell/fa-file-types
+/// See https://docs.microsoft.com/en-us/windows/win32/shell/fa-progids
+/// See https://docs.microsoft.com/en-us/windows/win32/shell/fa-perceivedtypes
+///
 /// `ext` is an extension without the leading dot.
 pub fn register_extension(ext: &str) -> Result<(), Error> {
+    if ext.is_empty() {
+        Err(ErrorKind::LogicError { s: "No extension." })?;
+    }
     let tx = Transaction::new().map_err(|e| ErrorKind::RegistryError { e })?;
     let root = RegKey::predef(HKEY_CURRENT_USER);
     let base = root
@@ -58,7 +65,76 @@ pub fn register_extension(ext: &str) -> Result<(), Error> {
     let value = "{86C86720-42A0-1069-A2E8-08002B30309D}";
     set_value(&tx, &base, &path, "", &value)?;
     // Software\Classes\.ext - Register handler for extension
-    set_value(&tx, &base, &format!(".{}", ext), "", &handler_name)?;
+    let path = &format!(".{}", ext);
+    set_value(&tx, &base, &path, "", &handler_name)?;
+    set_value(&tx, &base, &path, "PerceivedType", &"application")?;
+    // Software\Classes\.ext\OpenWithProgIds - Add extension to open with list
+    let path = &format!(".{}\\OpenWithProgIds", ext);
+    set_value(&tx, &base, &path, &handler_name, &"")?;
+    tx.commit().map_err(|e| ErrorKind::RegistryError { e })?;
+    Ok(())
+}
+
+pub fn unregister_extension(ext: &str) -> Result<(), Error> {
+    let tx = Transaction::new().map_err(|e| ErrorKind::RegistryError { e })?;
+    let base = RegKey::predef(HKEY_CURRENT_USER)
+        .open_subkey_transacted_with_flags(CLASSES_SUBKEY, &tx, KEY_ALL_ACCESS)
+        .map_err(|e| ErrorKind::RegistryError { e })?;
+    let handler_name = format!("{}.{}", HANDLER_PREFIX, ext);
+    // delete handler
+    if let Ok(key) = base.open_subkey_transacted_with_flags(&handler_name, &tx, KEY_ALL_ACCESS) {
+        key.delete_subkey_all("")
+            .map_err(|e| ErrorKind::RegistryError { e })?;
+        base.delete_subkey_transacted(&handler_name, &tx)
+            .map_err(|e| ErrorKind::RegistryError { e })?;
+    }
+    let ext_name = format!(".{}", ext);
+    if let Ok(ext_key) = base.open_subkey_transacted_with_flags(&ext_name, &tx, KEY_ALL_ACCESS) {
+        // if extension has handler as a default
+        if let Ok(val) = ext_key.get_value::<String, _>("") {
+            if val == handler_name {
+                // set default handler to unset
+                ext_key
+                    .delete_value("")
+                    .map_err(|e| ErrorKind::RegistryError { e })?;
+            }
+        }
+        // cleanup OpenWithProgids
+        let open_with_name = "OpenWithProgIds";
+        if let Ok(open_with_key) =
+            ext_key.open_subkey_transacted_with_flags(open_with_name, &tx, KEY_ALL_ACCESS)
+        {
+            // remove handler
+            if let Some(progid) = open_with_key.enum_values().find_map(|item| {
+                item.ok()
+                    .filter(|(name, _)| *name == handler_name)
+                    .map(|(name, _)| name)
+            }) {
+                open_with_key
+                    .delete_value(progid)
+                    .map_err(|e| ErrorKind::RegistryError { e })?;
+            }
+            // if OpenWithProgids was left empty
+            if let Ok(info) = open_with_key.query_info() {
+                if info.sub_keys == 0 && info.values == 0 {
+                    ext_key
+                        .delete_subkey_transacted(open_with_name, &tx)
+                        .map_err(|e| ErrorKind::RegistryError { e })?;
+                }
+            }
+        }
+        // if default handler is unset
+        if ext_key.get_value::<String, _>(&"").is_err() {
+            // ... and extension has no subkeys
+            if let Ok(info) = ext_key.query_info() {
+                if info.sub_keys == 0 {
+                    // ... remove extension key altogether
+                    base.delete_subkey_transacted(&ext_name, &tx)
+                        .map_err(|e| ErrorKind::RegistryError { e })?;
+                }
+            }
+        }
+    }
     tx.commit().map_err(|e| ErrorKind::RegistryError { e })?;
     Ok(())
 }
@@ -102,6 +178,20 @@ pub fn is_extension_registered_for_wsl(ext: &str) -> Result<bool, Error> {
     if let Ok(key) = base.open_subkey(format!(".{}", ext)) {
         if let Ok(handler) = key.get_value::<String, _>("") {
             if handler == format!("{}.{}", HANDLER_PREFIX, ext) {
+                return Ok(true);
+            }
+        }
+    }
+    Ok(false)
+}
+
+pub fn is_registered_for_other(ext: &str) -> Result<bool, Error> {
+    let base = RegKey::predef(HKEY_CURRENT_USER)
+        .open_subkey(CLASSES_SUBKEY)
+        .map_err(|e| ErrorKind::RegistryError { e })?;
+    if let Ok(key) = base.open_subkey(format!(".{}", ext)) {
+        if let Ok(handler) = key.get_value::<String, _>("") {
+            if handler != format!("{}.{}", HANDLER_PREFIX, ext) {
                 return Ok(true);
             }
         }

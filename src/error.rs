@@ -22,6 +22,9 @@ pub enum ErrorKind {
 
     #[fail(display = "WinAPI error: {}", s)]
     WinAPIError { s: String },
+
+    #[fail(display = "Logic error: {}", s)]
+    LogicError { s: &'static str },
 }
 
 #[derive(Debug)]

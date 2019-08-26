@@ -20,6 +20,8 @@ After registration, `.sh` files can be executed from explorer by double clicking
 Other files can be passed as path arguments by dragging and dropping them into
 `.sh` file icon.
 
+Scripts are executed in the same folder where the script file is located.
+
 Note that Drag & Drop handler may not work until reboot.
 
 ## TODO
