@@ -35,7 +35,7 @@ pub fn run_wsl(script_path: &PathBuf, args: &[PathBuf]) -> Result<(), Error> {
         bash_cmd.push("'");
     }
     // pause if the script exits with an error
-    bash_cmd.push(" || { echo -e \"\\n[Process exited - exit code $?]\"; read -n 1 -s; }");
+    bash_cmd.push(" || { printf >&2 '\\n[Process exited - exit code %d] ' \"$?\"; read -n 1 -s; }");
     // build command to start WSL process
     let mut cmd = process::Command::new(cmd_bin_path().as_os_str());
     cmd.arg("/C");
