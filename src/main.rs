@@ -19,11 +19,18 @@ use error::*;
 use std::env;
 use std::ffi::{OsStr, OsString};
 use std::path::PathBuf;
-use win32::*;
 
 fn main() {
     if let Err(e) = run_app() {
-        error_message(&e.to_wide());
+        unsafe {
+            use winapi::um::winuser::*;
+            MessageBoxW(
+                std::ptr::null_mut(),
+                e.to_wide().as_ptr(),
+                wchar::wch_c!("Error").as_ptr(),
+                MB_OK | MB_ICONERROR | MB_SERVICE_NOTIFICATION,
+            );
+        }
     }
 }
 
