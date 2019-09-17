@@ -2,11 +2,15 @@
 
 #[macro_use]
 extern crate failure;
+extern crate shell32;
+extern crate wchar;
 extern crate winapi;
 extern crate winreg;
 
 mod error;
+mod font;
 mod gui;
+mod icon;
 mod registry;
 mod win32;
 mod wsl;
@@ -19,7 +23,7 @@ use win32::*;
 
 fn main() {
     if let Err(e) = run_app() {
-        error_message(WideString::from(format!("{}", e)));
+        error_message(&e.to_wide());
     }
 }
 

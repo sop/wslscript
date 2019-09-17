@@ -1,5 +1,5 @@
 use crate::error::*;
-use std::path::PathBuf;
+use crate::icon::ShellIcon;
 use winreg::enums::*;
 use winreg::transaction::Transaction;
 use winreg::RegKey;
@@ -7,14 +7,21 @@ use winreg::RegKey;
 const HANDLER_PREFIX: &str = "wslscript";
 const CLASSES_SUBKEY: &str = "Software\\Classes";
 
+#[derive(Clone)]
+pub struct ExtConfig {
+    // filetype extension without leading dot
+    pub extension: String,
+    pub icon: ShellIcon,
+}
+
 /// Registers WSL Script as a handler for given file extension.
 ///
 /// See https://docs.microsoft.com/en-us/windows/win32/shell/fa-file-types
 /// See https://docs.microsoft.com/en-us/windows/win32/shell/fa-progids
 /// See https://docs.microsoft.com/en-us/windows/win32/shell/fa-perceivedtypes
 ///
-/// `ext` is an extension without the leading dot.
-pub fn register_extension(ext: &str) -> Result<(), Error> {
+pub fn register_extension(config: &ExtConfig) -> Result<(), Error> {
+    let ext = config.extension.as_str();
     if ext.is_empty() {
         Err(ErrorKind::LogicError { s: "No extension." })?;
     }
@@ -30,11 +37,14 @@ pub fn register_extension(ext: &str) -> Result<(), Error> {
         key.delete_subkey_all("")
             .map_err(|e| ErrorKind::RegistryError { e })?;
     }
-    let exe_os = std::env::current_exe().unwrap().canonicalize().unwrap();
+    let exe_os = std::env::current_exe()?.canonicalize()?;
     // shell handler doesn't recognize UNC format
-    let executable = exe_os.to_str().unwrap().trim_start_matches("\\\\?\\");
+    let executable = exe_os
+        .to_str()
+        .ok_or_else(|| ErrorKind::StringToPathUTF8Error)?
+        .trim_start_matches("\\\\?\\");
     let cmd = format!("\"{}\" -E \"%0\" %*", executable);
-    let icon = format!("{},0", executable);
+    let icon = config.icon.shell_path().to_os_string();
     let handler_desc = format!("WSL Shell Script (.{})", ext);
     // Software\Classes\wslscript.ext
     set_value(&tx, &base, &handler_name, "", &handler_desc)?;
@@ -42,20 +52,20 @@ pub fn register_extension(ext: &str) -> Result<(), Error> {
     set_value(&tx, &base, &handler_name, "FriendlyTypeName", &handler_desc)?;
     // Software\Classes\wslscript.ext\DefaultIcon
     let path = format!("{}\\DefaultIcon", handler_name);
-    set_value(&tx, &base, &path, "", &icon)?;
+    set_value(&tx, &base, &path, "", &icon.as_os_str())?;
     // Software\Classes\wslscript.ext\shell
     let path = format!("{}\\shell", handler_name);
     set_value(&tx, &base, &path, "", &"open")?;
     // Software\Classes\wslscript.ext\shell\open - Open command
     let path = format!("{}\\shell\\open", handler_name);
     set_value(&tx, &base, &path, "", &"Run in WSL")?;
-    set_value(&tx, &base, &path, "Icon", &icon)?;
+    set_value(&tx, &base, &path, "Icon", &icon.as_os_str())?;
     // Software\Classes\wslscript.ext\shell\open\command
     let path = format!("{}\\shell\\open\\command", handler_name);
     set_value(&tx, &base, &path, "", &cmd)?;
     // Software\Classes\wslscript.ext\shell\runas - Run as administrator
     let path = format!("{}\\shell\\runas", handler_name);
-    set_value(&tx, &base, &path, "Icon", &icon)?;
+    set_value(&tx, &base, &path, "Icon", &icon.as_os_str())?;
     set_value(&tx, &base, &path, "Extended", &"")?;
     // Software\Classes\wslscript.ext\shell\runas\command
     let path = format!("{}\\shell\\runas\\command", handler_name);
@@ -167,6 +177,7 @@ pub fn query_registered_extensions() -> Result<Vec<String>, Error> {
                 .trim_start_matches('.')
                 .to_string()
         })
+        .filter(|ext| is_extension_registered_for_wsl(ext).unwrap_or(false))
         .collect();
     Ok(extensions)
 }
@@ -199,6 +210,21 @@ pub fn is_registered_for_other(ext: &str) -> Result<bool, Error> {
     Ok(false)
 }
 
+pub fn get_extension_icon_path(ext: &str) -> Result<ShellIcon, Error> {
+    let base = RegKey::predef(HKEY_CURRENT_USER)
+        .open_subkey(CLASSES_SUBKEY)
+        .map_err(|e| ErrorKind::RegistryError { e })?;
+    let handler_name = format!("{}.{}", HANDLER_PREFIX, ext);
+    let key = base
+        .open_subkey(format!("{}\\DefaultIcon", handler_name))
+        .map_err(|e| ErrorKind::RegistryError { e })?;
+    let s = key
+        .get_value::<String, _>("")
+        .map_err(|e| ErrorKind::RegistryError { e })?;
+    s.parse::<ShellIcon>()
+}
+
+/*
 pub fn get_handler_executable_path(ext: &str) -> Result<PathBuf, Error> {
     let base = RegKey::predef(HKEY_CURRENT_USER)
         .open_subkey(CLASSES_SUBKEY)
@@ -230,3 +256,4 @@ pub fn is_registered_for_current_executable(ext: &str) -> Result<bool, Error> {
     }
     Ok(false)
 }
+*/

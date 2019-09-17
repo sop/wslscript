@@ -76,7 +76,7 @@ pub fn paths_to_wsl(paths: &[PathBuf]) -> Result<Vec<PathBuf>, Error> {
         .iter()
         .map(|path| {
             // escape single quotes
-            let escaped = path.to_str().unwrap().replace("'", "'\\''");
+            let escaped = path.to_string_lossy().replace("'", "'\\''");
             // each printf argument is a subshell with wslpath invocation
             format!("\"$(wslpath -u '{}')\"", escaped)
         })

@@ -1,4 +1,6 @@
+use crate::ustr;
 use std::fmt::{self, Display};
+use widestring::U16CString;
 
 #[derive(Debug, Fail)]
 pub enum ErrorKind {
@@ -20,6 +22,9 @@ pub enum ErrorKind {
     #[fail(display = "Registry error: {}", e)]
     RegistryError { e: std::io::Error },
 
+    #[fail(display = "IO error: {}", e)]
+    IOError { e: std::io::Error },
+
     #[fail(display = "WinAPI error: {}", s)]
     WinAPIError { s: String },
 
@@ -30,6 +35,16 @@ pub enum ErrorKind {
 #[derive(Debug)]
 pub struct Error {
     inner: failure::Context<ErrorKind>,
+}
+
+impl Error {
+    pub fn to_string(&self) -> String {
+        format!("{}", self)
+    }
+
+    pub fn to_wide(&self) -> U16CString {
+        ustr!(self.to_string())
+    }
 }
 
 impl From<ErrorKind> for Error {
@@ -43,6 +58,12 @@ impl From<ErrorKind> for Error {
 impl From<failure::Context<ErrorKind>> for Error {
     fn from(kind: failure::Context<ErrorKind>) -> Error {
         Error { inner: kind }
+    }
+}
+
+impl From<std::io::Error> for Error {
+    fn from(e: std::io::Error) -> Error {
+        Error::from(ErrorKind::IOError { e })
     }
 }
 

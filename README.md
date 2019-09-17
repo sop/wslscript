@@ -3,10 +3,10 @@
 Shell script _(.sh)_ handler for
 [Windows Subsystem for Linux](https://docs.microsoft.com/en-us/windows/wsl/about) _(WSL)_.
 
-Registers .sh extension to be executed in WSL.
+Registers .sh _(or any other)_ extension to be executed in WSL.
 Automatically handles Windows → Unix path conversions.
-Files can be dragged and dropped to .sh file icon in explorer to pass
-other files as arguments.
+Files can be dragged and dropped to .sh file icon in explorer to pass paths
+to other files as arguments.
 
 ## Usage
 
@@ -20,13 +20,13 @@ After registration, `.sh` files can be executed from explorer by double clicking
 Other files can be passed as path arguments by dragging and dropping them into
 `.sh` file icon.
 
-Scripts are executed in the same folder where the script file is located.
+Scripts are executed in the same folder where the script file is located,
+ie. `$PWD` is set to script's directory.
 
 Note that Drag & Drop handler may not work until reboot.
 
 ## TODO
 
-- Multiple configurable file extensions
 - WSL distro selection
 - Exit modes (leave terminal open on error, always close, etc.)
 - Optionally register for all users

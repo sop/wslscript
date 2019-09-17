@@ -1,10 +1,15 @@
 use crate::error::*;
+use crate::font::Font;
+use crate::icon::ShellIcon;
 use crate::registry;
+use crate::ustr;
 use crate::win32::*;
 use num_derive::{FromPrimitive, ToPrimitive};
 use num_traits::{FromPrimitive, ToPrimitive};
 use std::mem::{size_of, zeroed};
 use std::ptr::null_mut;
+use wchar::wch_c;
+use widestring::U16CString;
 use winapi::shared::basetsd;
 use winapi::shared::minwindef::*;
 use winapi::shared::minwindef::{FALSE as W_FALSE, TRUE as W_TRUE};
@@ -13,12 +18,23 @@ use winapi::shared::windef::*;
 use winapi::um::commctrl::*;
 use winapi::um::errhandlingapi::{GetLastError, SetLastError};
 use winapi::um::libloaderapi::GetModuleHandleW;
-use winapi::um::winbase::*;
 use winapi::um::wingdi::*;
 use winapi::um::winuser::*;
 
+extern "system" {
+    /// PickIconDlg() prototype
+    /// https://docs.microsoft.com/en-us/windows/win32/api/shlobj_core/nf-shlobj_core-pickicondlg
+    pub fn PickIconDlg(
+        hwnd: HWND,
+        pszIconPath: PWSTR,
+        cchIconPath: UINT,
+        piIconIndex: *mut std::os::raw::c_int,
+    ) -> std::os::raw::c_int;
+}
+
 pub fn start_gui() -> Result<(), Error> {
-    MainWindow::new("WSL Script")?.run()
+    let wnd = MainWindow::new(wch_c!("WSL Script"))?;
+    wnd.run()
 }
 
 pub trait WindowProc {
@@ -69,14 +85,18 @@ unsafe extern "system" fn window_proc_wrapper<T: WindowProc>(
 struct MainWindow {
     window: HWND,
     caption_font: Font,
-    current_ext_idx: i32,
+    ext_font: Font,
+    current_ext_idx: isize,
+    ext_icon: Option<ShellIcon>,
 }
 impl Default for MainWindow {
     fn default() -> Self {
         Self {
             window: null_mut(),
             caption_font: Default::default(),
+            ext_font: Default::default(),
             current_ext_idx: -1,
+            ext_icon: None,
         }
     }
 }
@@ -84,10 +104,14 @@ impl Default for MainWindow {
 #[derive(FromPrimitive, ToPrimitive, PartialEq)]
 enum Control {
     StaticMsg = 100,    // message area
-    StaticRegister,     // label for extension input
+    RegisterLabel,      // label for extension input
     EditExtension,      // input for extension
     BtnRegister,        // register button
     ListViewExtensions, // listview of registered extensions
+    ExtensionLabel,     // label for extension
+    StaticIcon,         // icon for extension
+    IconLabel,          // label for icon
+    BtnSave,            // Save button
 }
 
 #[derive(FromPrimitive, ToPrimitive, PartialEq)]
@@ -97,35 +121,35 @@ enum MenuItem {
 }
 
 impl MainWindow {
-    fn new(title: &str) -> Result<Box<Self>, Error> {
+    /// Create application window.
+    ///
+    fn new(title: &[u16]) -> Result<Box<Self>, Error> {
         // must be boxed to have a fixed pointer
         let wnd = Box::new(Self {
             ..Default::default()
         });
         let wnd_ptr = &*wnd as *const _;
         let instance = unsafe { GetModuleHandleW(null_mut()) };
-        let class_name = WideString::from("WSLScript");
+        let class_name = wch_c!("WSLScript");
         // register window class
-        unsafe {
-            let wc = WNDCLASSEXW {
-                cbSize: size_of::<WNDCLASSEXW>() as u32,
-                style: CS_OWNDC | CS_HREDRAW | CS_VREDRAW,
-                hbrBackground: (COLOR_WINDOW + 1) as HBRUSH,
-                lpfnWndProc: Some(window_proc_wrapper::<MainWindow>),
-                hInstance: instance,
-                lpszClassName: class_name.as_ptr(),
-                hIcon: LoadIconW(instance, WideString::from("app").as_ptr()),
-                hCursor: LoadCursorW(null_mut(), IDC_ARROW),
-                ..zeroed()
-            };
-            if 0 == RegisterClassExW(&wc) {
-                Err(last_error())?
-            }
+        let wc = WNDCLASSEXW {
+            cbSize: size_of::<WNDCLASSEXW>() as u32,
+            style: CS_OWNDC | CS_HREDRAW | CS_VREDRAW,
+            hbrBackground: (COLOR_WINDOW + 1) as HBRUSH,
+            lpfnWndProc: Some(window_proc_wrapper::<MainWindow>),
+            hInstance: instance,
+            lpszClassName: class_name.as_ptr(),
+            hIcon: unsafe { LoadIconW(instance, wch_c!("app").as_ptr()) },
+            hCursor: unsafe { LoadCursorW(null_mut(), IDC_ARROW) },
+            ..unsafe { zeroed() }
+        };
+        if 0 == unsafe { RegisterClassExW(&wc) } {
+            Err(last_error())?
         }
         // create window
         #[rustfmt::skip]
         let hwnd = unsafe { CreateWindowExW(
-            0, class_name.as_ptr(), WideString::from(title).as_ptr(),
+            0, class_name.as_ptr(), title.as_ptr(),
             WS_OVERLAPPEDWINDOW & !WS_MAXIMIZEBOX | WS_VISIBLE,
             CW_USEDEFAULT, CW_USEDEFAULT, 300, 300,
             null_mut(), null_mut(), instance, wnd_ptr as LPVOID) };
@@ -139,16 +163,14 @@ impl MainWindow {
     ///
     fn run(&self) -> Result<(), Error> {
         loop {
-            unsafe {
-                let mut msg: MSG = zeroed();
-                match GetMessageW(&mut msg, self.window, 0, 0) {
-                    x if x > 0 => {
-                        TranslateMessage(&msg);
-                        DispatchMessageW(&msg);
-                    }
-                    x if x < 0 => Err(last_error())?,
-                    _ => break,
+            let mut msg: MSG = unsafe { zeroed() };
+            match unsafe { GetMessageW(&mut msg, self.window, 0, 0) } {
+                x if x > 0 => {
+                    unsafe { TranslateMessage(&msg) };
+                    unsafe { DispatchMessageW(&msg) };
                 }
+                x if x < 0 => Err(last_error())?,
+                _ => break,
             }
         }
         Ok(())
@@ -159,6 +181,7 @@ impl MainWindow {
     fn create_window_controls(&mut self) -> Result<(), Error> {
         let instance = unsafe { GetWindowLongW(self.window, GWL_HINSTANCE) as HINSTANCE };
         self.caption_font = Font::new_default_caption()?;
+        self.ext_font = Font::new_caption(24)?;
         // init common controls
         let icex = INITCOMMONCONTROLSEX {
             dwSize: size_of::<INITCOMMONCONTROLSEX>() as u32,
@@ -168,7 +191,7 @@ impl MainWindow {
         // static message area
         #[rustfmt::skip]
         let hwnd = unsafe { CreateWindowExW(
-            0, WideString::from("STATIC").as_ptr(), null_mut(),
+            0, wch_c!("STATIC").as_ptr(), null_mut(),
             SS_CENTER | WS_CHILD | WS_VISIBLE,
             0, 0, 0, 0, self.window,
             Control::StaticMsg.to_u16().unwrap() as HMENU, instance, null_mut(),
@@ -179,8 +202,7 @@ impl MainWindow {
         // register button
         #[rustfmt::skip]
         let hwnd = unsafe { CreateWindowExW(
-            0, WideString::from("BUTTON").as_ptr(),
-            WideString::from("Register").as_ptr(),
+            0, wch_c!("BUTTON").as_ptr(), wch_c!("Register").as_ptr(),
             WS_TABSTOP | WS_VISIBLE | WS_CHILD | BS_DEFPUSHBUTTON,
             0, 0, 0, 0, self.window,
             Control::BtnRegister.to_u16().unwrap() as HMENU, instance, null_mut()
@@ -191,11 +213,10 @@ impl MainWindow {
         // register label
         #[rustfmt::skip]
         let hwnd = unsafe { CreateWindowExW(
-            0, WideString::from("STATIC").as_ptr(),
-            WideString::from("Extension:").as_ptr(),
+            0, wch_c!("STATIC").as_ptr(), wch_c!("Extension:").as_ptr(),
             SS_CENTERIMAGE | SS_RIGHT | WS_CHILD | WS_VISIBLE,
             0, 0, 0, 0, self.window,
-            Control::StaticRegister.to_u16().unwrap() as HMENU, instance, null_mut(),
+            Control::RegisterLabel.to_u16().unwrap() as HMENU, instance, null_mut(),
         ) };
         #[rustfmt::skip]
         unsafe { SendMessageW(hwnd, WM_SETFONT,
@@ -203,7 +224,7 @@ impl MainWindow {
         // extension input
         #[rustfmt::skip]
         let hwnd = unsafe { CreateWindowExW(
-            WS_EX_CLIENTEDGE, WideString::from("EDIT").as_ptr(), null_mut(),
+            WS_EX_CLIENTEDGE, wch_c!("EDIT").as_ptr(), null_mut(),
             ES_LEFT | ES_LOWERCASE | WS_CHILD | WS_VISIBLE | WS_BORDER,
             0, 0, 0, 0, self.window,
             Control::EditExtension.to_u16().unwrap() as HMENU, instance, null_mut(),
@@ -216,13 +237,13 @@ impl MainWindow {
             .unwrap_or_else(|_| vec![])
             .is_empty()
         {
-            unsafe { SetWindowTextW(hwnd, WideString::from("sh").as_ptr()) };
+            unsafe { SetWindowTextW(hwnd, wch_c!("sh").as_ptr()) };
         }
         // listview of registered extensions
         #[rustfmt::skip]
         let hwnd = unsafe { CreateWindowExW(
             LVS_EX_FULLROWSELECT | LVS_EX_GRIDLINES,
-            WideString::from(WC_LISTVIEW).as_ptr(), null_mut(),
+            ustr!(WC_LISTVIEW).as_ptr(), null_mut(),
             WS_CHILD | WS_VISIBLE | WS_BORDER | LVS_REPORT | LVS_SINGLESEL | LVS_SHOWSELALWAYS,
             0, 0, 0, 0, self.window,
             Control::ListViewExtensions.to_u16().unwrap() as HMENU, instance, null_mut(),
@@ -235,7 +256,7 @@ impl MainWindow {
             mask: LVCF_FMT | LVCF_WIDTH | LVCF_TEXT,
             fmt: LVCFMT_LEFT,
             cx: 50,
-            pszText: WideString::from("Ext").as_mut_ptr(),
+            pszText: wch_c!("Ext").as_ptr() as _,
             ..unsafe { zeroed() }
         };
         unsafe { SendMessageW(hwnd, LVM_INSERTCOLUMNW, 0, &col as *const _ as LPARAM) };
@@ -243,36 +264,108 @@ impl MainWindow {
         match registry::query_registered_extensions() {
             Ok(exts) => {
                 for (i, ext) in exts.iter().enumerate() {
+                    let s = ustr!(ext);
                     let lvi = LV_ITEMW {
                         mask: LVIF_TEXT,
                         iItem: i as i32,
-                        pszText: WideString::from(ext.as_str()).as_mut_ptr(),
+                        pszText: s.into_raw(),
                         ..unsafe { zeroed() }
                     };
                     unsafe { SendMessageW(hwnd, LVM_INSERTITEMW, 0, &lvi as *const _ as LPARAM) };
                 }
             }
             Err(e) => {
-                error_message(WideString::from(format!("Failed to query registry: {}", e)));
+                let s = ustr!(format!("Failed to query registry: {}", e));
+                error_message(&s);
             }
         }
+        // extension label
+        #[rustfmt::skip]
+        let hwnd = unsafe { CreateWindowExW(
+            0, wch_c!("STATIC").as_ptr(), wch_c!("").as_ptr(),
+            SS_LEFT | WS_CHILD | WS_VISIBLE,
+            0, 0, 0, 0, self.window,
+            Control::ExtensionLabel.to_u16().unwrap() as HMENU, instance, null_mut()
+        ) };
+        #[rustfmt::skip]
+        unsafe { SendMessageW(hwnd, WM_SETFONT,
+            self.ext_font.handle as WPARAM, W_TRUE as LPARAM) };
+        // extension icon
+        #[rustfmt::skip]
+        unsafe { CreateWindowExW(
+            0, wch_c!("STATIC").as_ptr(), null_mut(),
+            SS_ICON | SS_CENTERIMAGE | SS_NOTIFY | WS_CHILD | WS_VISIBLE,
+            0, 0, 0, 0, self.window,
+            Control::StaticIcon.to_u16().unwrap() as HMENU, instance, null_mut(),
+        ) };
+        // icon label
+        #[rustfmt::skip]
+        let hwnd = unsafe { CreateWindowExW(
+            0, wch_c!("STATIC").as_ptr(), wch_c!("Icon").as_ptr(),
+            SS_CENTER | WS_CHILD | WS_VISIBLE,
+            0, 0, 0, 0, self.window,
+            Control::IconLabel.to_u16().unwrap() as HMENU, instance, null_mut()
+        ) };
+        #[rustfmt::skip]
+        unsafe { SendMessageW(hwnd, WM_SETFONT,
+            self.caption_font.handle as WPARAM, W_TRUE as LPARAM) };
+        // save button
+        #[rustfmt::skip]
+        let hwnd = unsafe { CreateWindowExW(
+            0, wch_c!("BUTTON").as_ptr(), wch_c!("Save").as_ptr(),
+            WS_TABSTOP | WS_VISIBLE | WS_CHILD | BS_DEFPUSHBUTTON,
+            0, 0, 0, 0, self.window,
+            Control::BtnSave.to_u16().unwrap() as HMENU, instance, null_mut()
+        ) };
+        #[rustfmt::skip]
+        unsafe { SendMessageW(hwnd, WM_SETFONT,
+            self.caption_font.handle as WPARAM, W_TRUE as LPARAM) };
         self.update_control_states();
         Ok(())
     }
 
     /// Update control states.
     ///
-    fn update_control_states(&self) -> Option<()> {
-        let hwnd_msg = self.get_control_handle(Control::StaticMsg);
-        let msg: String = if self.current_ext_idx == -1 {
-            "Enter the extension and click Register to associate a filetype with WSL.".to_string()
-        } else {
-            let hwnd = self.get_control_handle(Control::ListViewExtensions);
-            let ext = Self::get_listview_item_text(hwnd, self.current_ext_idx as usize);
+    fn update_control_states(&self) {
+        // set message
+        let msg: String = if let Some(ext) = self.get_current_extension() {
+            // TODO: check that extension is registered for current executable
             format!(".{} extension is registered for WSL!", ext)
+        } else {
+            "Enter the extension and click Register to associate a filetype with WSL.".to_string()
         };
-        unsafe { SetWindowTextW(hwnd_msg, WideString::from(msg).as_ptr()) };
-        Some(())
+        let hwnd = self.get_control_handle(Control::StaticMsg);
+        unsafe { SetWindowTextW(hwnd, ustr!(msg).as_ptr()) };
+        // extension label
+        let hwnd = self.get_control_handle(Control::ExtensionLabel);
+        if let Some(mut ext) = self.get_current_extension() {
+            ext.insert_str(0, ".");
+            unsafe { SetWindowTextW(hwnd, ustr!(ext).as_ptr()) };
+            unsafe { ShowWindow(hwnd, SW_SHOW) };
+        } else {
+            unsafe { ShowWindow(hwnd, SW_HIDE) };
+        }
+        // set icon
+        let hwnd = self.get_control_handle(Control::StaticIcon);
+        if let Some(icon) = &self.ext_icon {
+            unsafe { SendMessageW(hwnd, STM_SETICON, icon.handle() as WPARAM, 0) };
+        } else {
+            unsafe { SendMessageW(hwnd, STM_SETICON, 0, 0) };
+        }
+        // icon label
+        let hwnd = self.get_control_handle(Control::IconLabel);
+        if self.current_ext_idx == -1 {
+            unsafe { ShowWindow(hwnd, SW_HIDE) };
+        } else {
+            unsafe { ShowWindow(hwnd, SW_SHOW) };
+        }
+        // save button
+        let hwnd = self.get_control_handle(Control::BtnSave);
+        if self.current_ext_idx == -1 {
+            unsafe { ShowWindow(hwnd, SW_HIDE) };
+        } else {
+            unsafe { ShowWindow(hwnd, SW_SHOW) };
+        }
     }
 
     /// Handle WM_SIZE message.
@@ -282,29 +375,31 @@ impl MainWindow {
     fn on_resize(&self, width: i32, _height: i32) {
         // static message
         let hwnd = self.get_control_handle(Control::StaticMsg);
-        if !hwnd.is_null() {
-            unsafe { MoveWindow(hwnd, 0, 10, width, 40, W_TRUE) };
-        }
+        unsafe { MoveWindow(hwnd, 0, 10, width, 40, W_TRUE) };
         // register button
         let hwnd = self.get_control_handle(Control::BtnRegister);
-        if !hwnd.is_null() {
-            unsafe { MoveWindow(hwnd, width - 100, 50, 90, 25, W_TRUE) };
-        }
+        unsafe { MoveWindow(hwnd, width - 100, 50, 90, 25, W_TRUE) };
         // register label
-        let hwnd = self.get_control_handle(Control::StaticRegister);
-        if !hwnd.is_null() {
-            unsafe { MoveWindow(hwnd, 10, 50, 60, 25, W_TRUE) };
-        }
+        let hwnd = self.get_control_handle(Control::RegisterLabel);
+        unsafe { MoveWindow(hwnd, 10, 50, 60, 25, W_TRUE) };
         // register input
         let hwnd = self.get_control_handle(Control::EditExtension);
-        if !hwnd.is_null() {
-            unsafe { MoveWindow(hwnd, 80, 50, width - 90 - 100, 25, W_TRUE) };
-        }
+        unsafe { MoveWindow(hwnd, 80, 50, width - 90 - 100, 25, W_TRUE) };
         // extensions listview
         let hwnd = self.get_control_handle(Control::ListViewExtensions);
-        if !hwnd.is_null() {
-            unsafe { MoveWindow(hwnd, 10, 100, width - 20, 80, W_TRUE) };
-        }
+        unsafe { MoveWindow(hwnd, 10, 100, width - 20, 80, W_TRUE) };
+        // extension label
+        let hwnd = self.get_control_handle(Control::ExtensionLabel);
+        unsafe { MoveWindow(hwnd, 10, 190, 100, 25, W_TRUE) };
+        // static icon
+        let hwnd = self.get_control_handle(Control::StaticIcon);
+        unsafe { MoveWindow(hwnd, width - 70 - 32, 190, 32, 32, W_TRUE) };
+        // icon label
+        let hwnd = self.get_control_handle(Control::IconLabel);
+        unsafe { MoveWindow(hwnd, width - 70 - 32, 225, 32, 25, W_TRUE) };
+        // save button
+        let hwnd = self.get_control_handle(Control::BtnSave);
+        unsafe { MoveWindow(hwnd, width - 60, 190, 50, 25, W_TRUE) };
     }
 
     /// Handle WM_COMMAND message from a control.
@@ -312,69 +407,110 @@ impl MainWindow {
     /// * `hwnd` - Handle of the sending control
     /// * `control_id` - ID of the sending control
     /// * `code` - Notification code
-    fn on_control(&mut self, _hwnd: HWND, control_id: Control, _code: WORD) -> LRESULT {
-        if let Control::BtnRegister = control_id {
-            let ext = self
-                .get_extension_input_text()
-                .trim_matches('.')
-                .to_string();
-            if ext.is_empty() {
-                return 0;
-            }
-            match registry::is_registered_for_other(&ext) {
-                Err(e) => {
-                    error_message(WideString::from(format!(
-                        "Failed to register extension: {}",
-                        e
-                    )));
-                    return 0;
-                }
-                Ok(true) => {
-                    let result = unsafe {
-                        MessageBoxW(
-                            self.window,
-                            WideString::from(format!(
-                                ".{} extension is already registered for another application.\nRegister anyway?",
-                                ext
-                            ))
-                            .as_ptr(),
-                            WideString::from("Confirm extension registration.").as_ptr(),
-                            MB_YESNO | MB_ICONQUESTION | MB_DEFBUTTON2,
-                        )
-                    };
-                    if result == IDNO {
-                        return 0;
+    fn on_control(
+        &mut self,
+        _hwnd: HWND,
+        control_id: Control,
+        code: WORD,
+    ) -> Result<LRESULT, Error> {
+        #![allow(clippy::single_match)]
+        match control_id {
+            Control::BtnRegister => match code {
+                BN_CLICKED => return self.on_register_button_clicked(),
+                _ => {}
+            },
+            Control::StaticIcon => match code {
+                STN_DBLCLK => {
+                    if let Some(icon) = self.pick_icon_dlg() {
+                        self.ext_icon = Some(icon);
+                        self.update_control_states();
                     }
                 }
-                Ok(false) => {}
+                _ => {}
+            },
+            Control::BtnSave => match code {
+                BN_CLICKED => return self.on_save_button_clicked(),
+                _ => {}
+            },
+            _ => {}
+        }
+        Ok(0)
+    }
+
+    /// Handle register button click.
+    ///
+    fn on_register_button_clicked(&mut self) -> Result<LRESULT, Error> {
+        let ext = self
+            .get_extension_input_text()
+            .trim_matches('.')
+            .to_string();
+        if ext.is_empty() {
+            return Ok(0);
+        }
+        if registry::is_registered_for_other(&ext)? {
+            let s = ustr!(format!(
+                ".{} extension is already registered for another application.\n\
+                 Register anyway?",
+                ext
+            ));
+            let result = unsafe {
+                MessageBoxW(
+                    self.window,
+                    s.as_ptr(),
+                    wch_c!("Confirm extension registration.").as_ptr(),
+                    MB_YESNO | MB_ICONQUESTION | MB_DEFBUTTON2,
+                )
+            };
+            if result == IDNO {
+                return Ok(0);
             }
-            if let Err(e) = registry::register_extension(&ext) {
-                error_message(WideString::from(format!(
-                    "Failed to register extension: {}",
-                    e
-                )));
-            }
+        }
+        let icon = ShellIcon::load_default()?;
+        let config = registry::ExtConfig {
+            extension: ext.clone(),
+            icon,
+        };
+        registry::register_extension(&config)?;
+        // clear extension input
+        unsafe {
+            SetDlgItemTextW(
+                self.window,
+                Control::EditExtension.to_i32().unwrap(),
+                wch_c!("").as_ptr(),
+            )
+        };
+        let idx = self.listview_find_ext(&ext).or_else(|| {
             // insert to listview
             let hwnd = self.get_control_handle(Control::ListViewExtensions);
+            let s = ustr!(ext);
             let lvi = LV_ITEMW {
                 mask: LVIF_TEXT,
                 iItem: 0,
-                pszText: WideString::from(ext.as_str()).as_mut_ptr(),
+                pszText: s.as_ptr() as _,
                 ..unsafe { zeroed() }
             };
-            let idx = unsafe { SendMessageW(hwnd, LVM_INSERTITEMW, 0, &lvi as *const _ as LPARAM) };
-            self.current_ext_idx = idx as i32;
-            // clear extension input
-            unsafe {
-                SetDlgItemTextW(
-                    self.window,
-                    Control::EditExtension.to_i32().unwrap(),
-                    WideString::from("").as_ptr(),
-                )
-            };
-            self.update_control_states();
+            let result =
+                unsafe { SendMessageW(hwnd, LVM_INSERTITEMW, 0, &lvi as *const _ as LPARAM) };
+            Some(result as usize)
+        });
+        let i = match idx {
+            Some(i) => i as isize,
+            None => -1,
+        };
+        self.set_current_extension(i);
+        self.update_control_states();
+        Ok(0)
+    }
+
+    /// Handle save button click.
+    ///
+    fn on_save_button_clicked(&mut self) -> Result<LRESULT, Error> {
+        if let Some(extension) = self.get_current_extension() {
+            let icon = self.ext_icon.clone().unwrap();
+            let config = registry::ExtConfig { extension, icon };
+            registry::register_extension(&config)?;
         }
-        0
+        Ok(0)
     }
 
     /// Handle message from a menu.
@@ -384,29 +520,41 @@ impl MainWindow {
     fn on_menucommand(&mut self, hmenu: HMENU, item_id: MenuItem) -> LRESULT {
         match item_id {
             MenuItem::Unregister => {
-                let mut mi = MENUINFO {
-                    cbSize: size_of::<MENUINFO>() as u32,
-                    fMask: MIM_MENUDATA,
-                    ..unsafe { zeroed() }
-                };
-                unsafe { GetMenuInfo(hmenu, &mut mi) };
-                let hwnd = self.get_control_handle(Control::ListViewExtensions);
-                let idx = mi.dwMenuData as usize;
-                let ext = Self::get_listview_item_text(hwnd, idx);
-                if let Err(e) = registry::unregister_extension(&ext) {
-                    error_message(WideString::from(format!(
-                        "Failed to unregister extension: {}",
-                        e
-                    )));
-                    return 0;
+                let idx: usize = self.get_menu_data(hmenu);
+                if let Some(ext) = self.get_listview_item_text(idx) {
+                    if let Err(e) = registry::unregister_extension(&ext) {
+                        let s = ustr!(format!("Failed to unregister extension: {}", e));
+                        error_message(&s);
+                        return 0;
+                    }
                 }
+                let hwnd = self.get_control_handle(Control::ListViewExtensions);
                 unsafe { SendMessageW(hwnd, LVM_DELETEITEM, idx, 0) };
-                self.current_ext_idx = -1;
+                self.set_current_extension(-1);
                 self.update_control_states();
             }
-            MenuItem::EditExtension => {}
+            MenuItem::EditExtension => {
+                let idx: usize = self.get_menu_data(hmenu);
+                self.set_current_extension(idx as isize);
+                self.update_control_states();
+            }
         }
         0
+    }
+
+    /// Get application-defined value associated with a menu
+    ///
+    fn get_menu_data<T>(&self, hmenu: HMENU) -> T
+    where
+        T: From<winapi::shared::basetsd::ULONG_PTR>,
+    {
+        let mut mi = MENUINFO {
+            cbSize: size_of::<MENUINFO>() as u32,
+            fMask: MIM_MENUDATA,
+            ..unsafe { zeroed() }
+        };
+        unsafe { GetMenuInfo(hmenu, &mut mi) };
+        T::from(mi.dwMenuData)
     }
 
     /// Handle WM_NOTIFY message.
@@ -431,7 +579,7 @@ impl MainWindow {
                     if nmia.iItem < 0 {
                         return 0;
                     }
-                    self.current_ext_idx = nmia.iItem;
+                    self.set_current_extension(nmia.iItem as isize);
                     self.update_control_states();
                 }
                 // when listview item is right-clicked
@@ -456,10 +604,10 @@ impl MainWindow {
                         ..unsafe { zeroed() }
                     };
                     mii.wID = MenuItem::EditExtension.to_u32().unwrap();
-                    mii.dwTypeData = WideString::from("Edit").as_mut_ptr();
+                    mii.dwTypeData = wch_c!("Edit").as_ptr() as _;
                     unsafe { InsertMenuItemW(hmenu, 0, W_TRUE, &mii) };
                     mii.wID = MenuItem::Unregister.to_u32().unwrap();
-                    mii.dwTypeData = WideString::from("Unregister").as_mut_ptr();
+                    mii.dwTypeData = wch_c!("Unregister").as_ptr() as _;
                     unsafe { InsertMenuItemW(hmenu, 1, W_TRUE, &mii) };
                     let mut pos: POINT = nmia.ptAction;
                     unsafe { ClientToScreen(hwnd, &mut pos) };
@@ -472,24 +620,65 @@ impl MainWindow {
         0
     }
 
-    fn get_listview_item_text(hwnd: HWND, index: usize) -> String {
+    /// Get currently selected extension.
+    ///
+    fn get_current_extension(&self) -> Option<String> {
+        if self.current_ext_idx == -1 {
+            return None;
+        }
+        self.get_listview_item_text(self.current_ext_idx as usize)
+    }
+
+    /// Get listview text by index.
+    ///
+    fn get_listview_item_text(&self, index: usize) -> Option<String> {
         let mut buf: Vec<u16> = Vec::with_capacity(32);
         let lvi = LV_ITEMW {
             pszText: buf.as_mut_ptr(),
             cchTextMax: buf.capacity() as i32,
             ..unsafe { zeroed() }
         };
+        let hwnd = self.get_control_handle(Control::ListViewExtensions);
         unsafe {
-            let len = SendMessageW(hwnd, LVM_GETITEMTEXTW, index, &lvi as *const _ as isize);
+            let len = SendMessageW(hwnd, LVM_GETITEMTEXTW, index, &lvi as *const _ as LPARAM);
             buf.set_len(len as usize);
         };
-        WideString::from(buf.as_slice()).to_string()
+        U16CString::new(buf).ok().map(|u| u.to_string_lossy())
     }
 
+    /// Find extension from listview.
+    ///
+    /// Returns listview index or None if extension wasn't found.
+    fn listview_find_ext(&self, ext: &str) -> Option<usize> {
+        let s = ustr!(ext);
+        let lvf = LVFINDINFOW {
+            flags: LVFI_STRING,
+            psz: s.as_ptr(),
+            ..unsafe { zeroed() }
+        };
+        let hwnd = self.get_control_handle(Control::ListViewExtensions);
+        let idx = unsafe {
+            SendMessageW(
+                hwnd,
+                LVM_FINDITEMW,
+                -1_isize as usize,
+                &lvf as *const _ as LPARAM,
+            )
+        };
+        match idx {
+            -1 => None,
+            _ => Some(idx as usize),
+        }
+    }
+
+    /// Get window handle to control.
+    ///
     fn get_control_handle(&self, control: Control) -> HWND {
         unsafe { GetDlgItem(self.window, control.to_i32().unwrap()) }
     }
 
+    /// Get text from extension text input.
+    ///
     fn get_extension_input_text(&self) -> String {
         let mut buf: Vec<u16> = Vec::with_capacity(32);
         unsafe {
@@ -501,7 +690,63 @@ impl MainWindow {
             );
             buf.set_len(len as usize);
         }
-        WideString::from(buf.as_slice()).to_string()
+        U16CString::new(buf).unwrap().to_string_lossy()
+    }
+
+    /// Set extension that is currently selected for edit.
+    ///
+    fn set_current_extension(&mut self, listview_idx: isize) {
+        self.current_ext_idx = listview_idx;
+        self.ext_icon = None;
+        if let Some(ext) = self.get_current_extension() {
+            if let Ok(icon) = registry::get_extension_icon_path(&ext) {
+                self.ext_icon = Some(icon);
+            }
+        }
+    }
+
+    /// Launch icon picker dialog.
+    ///
+    /// Returns ShellIcon or None if no icon was selected.
+    fn pick_icon_dlg(&self) -> Option<ShellIcon> {
+        let mut buf = [0 as WCHAR; MAX_PATH];
+        let mut idx: std::os::raw::c_int = 0;
+        if let Some(si) = &self.ext_icon {
+            let mut path = si.path();
+            if let Ok(p) = path.expand() {
+                path = p;
+            }
+            let s = path.to_wide();
+            if s.len() < buf.len() {
+                for (i, &c) in s.as_slice().iter().enumerate() {
+                    buf[i] = c;
+                }
+                idx = si.index() as i32;
+            }
+        }
+        let result =
+            unsafe { PickIconDlg(self.window, buf.as_mut_ptr(), buf.len() as u32, &mut idx) };
+        if result == 0 {
+            return None;
+        }
+        match buf.iter().position(|&c| c == 0) {
+            Some(pos) => {
+                let path =
+                    unsafe { U16CString::from_vec_with_nul_unchecked(&buf[..=pos as usize]) };
+                if let Ok(p) = WinPathBuf::from(path.as_ucstr()).expand() {
+                    match ShellIcon::load(p, idx as u32) {
+                        Ok(icon) => Some(icon),
+                        Err(e) => {
+                            error_message(&e.to_wide());
+                            None
+                        }
+                    }
+                } else {
+                    None
+                }
+            }
+            None => None,
+        }
     }
 }
 
@@ -517,6 +762,7 @@ impl WindowProc for MainWindow {
             WM_NCCREATE => {
                 // store main window handle
                 self.window = hwnd;
+                // WM_NCCREATE must be passed to DefWindowProc
                 None
             }
             WM_CREATE => {
@@ -543,7 +789,13 @@ impl WindowProc for MainWindow {
                 // if lParam is non-zero, message is from a control
                 if lparam != 0 {
                     if let Some(id) = FromPrimitive::from_u16(LOWORD(wparam as u32)) {
-                        return Some(self.on_control(lparam as HWND, id, HIWORD(wparam as u32)));
+                        match self.on_control(lparam as HWND, id, HIWORD(wparam as u32)) {
+                            Err(e) => {
+                                error_message(&e.to_wide());
+                                return Some(0);
+                            }
+                            Ok(l) => return Some(l),
+                        }
                     }
                 }
                 // if lParam is zero and HIWORD of wParam is zero, message is from a menu
@@ -580,68 +832,4 @@ impl WindowProc for MainWindow {
             _ => None,
         }
     }
-}
-
-struct Font {
-    handle: HFONT,
-}
-impl Font {
-    fn new_default_caption() -> Result<Self, Error> {
-        let mut metrics = NONCLIENTMETRICSW {
-            cbSize: size_of::<NONCLIENTMETRICSW>() as u32,
-            ..unsafe { zeroed() }
-        };
-        if W_FALSE
-            == unsafe {
-                SystemParametersInfoW(
-                    SPI_GETNONCLIENTMETRICS,
-                    metrics.cbSize,
-                    &mut metrics as *mut _ as *mut _,
-                    0,
-                )
-            }
-        {
-            Err(last_error())?
-        }
-        let font = unsafe { CreateFontIndirectW(&metrics.lfCaptionFont) };
-        if font.is_null() {
-            Err(last_error())?
-        }
-        Ok(Self { handle: font })
-    }
-}
-impl Drop for Font {
-    fn drop(&mut self) {
-        if !self.handle.is_null() {
-            unsafe { DeleteObject(self.handle as HGDIOBJ) };
-        }
-    }
-}
-impl Default for Font {
-    fn default() -> Self {
-        Self { handle: null_mut() }
-    }
-}
-
-fn last_error() -> Error {
-    let msg: String;
-    let mut buf = [0 as WCHAR; 2048];
-    let errno = unsafe { GetLastError() };
-    let res = unsafe {
-        FormatMessageW(
-            FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_IGNORE_INSERTS,
-            null_mut(),
-            errno,
-            DWORD::from(MAKELANGID(LANG_NEUTRAL, SUBLANG_DEFAULT)),
-            buf.as_mut_ptr(),
-            buf.len() as DWORD,
-            null_mut(),
-        )
-    };
-    if res == 0 {
-        msg = format!("Error code {}", errno).to_string();
-    } else {
-        msg = WideString::from(&buf[..(res + 1) as usize]).to_string();
-    }
-    Error::from(ErrorKind::WinAPIError { s: msg })
 }
