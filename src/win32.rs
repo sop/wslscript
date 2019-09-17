@@ -33,7 +33,7 @@ pub fn error_message(msg: &U16CStr) {
     use winapi::um::winuser::{MessageBoxW, MB_ICONERROR, MB_OK};
     unsafe {
         MessageBoxW(
-            std::ptr::null_mut(),
+            null_mut(),
             msg.as_ptr(),
             wch_c!("Error").as_ptr(),
             MB_OK | MB_ICONERROR,
@@ -43,7 +43,7 @@ pub fn error_message(msg: &U16CStr) {
 
 pub fn last_error() -> Error {
     use winapi::um::winbase::*;
-    let buf = null_mut();
+    let mut buf: LPWSTR = null_mut();
     let errno = unsafe { winapi::um::errhandlingapi::GetLastError() };
     let res = unsafe {
         FormatMessageW(
@@ -53,7 +53,7 @@ pub fn last_error() -> Error {
             null_mut(),
             errno,
             DWORD::from(MAKELANGID(LANG_NEUTRAL, SUBLANG_DEFAULT)),
-            buf as _,
+            &mut buf as *mut LPWSTR as _,
             0,
             null_mut(),
         )
@@ -61,7 +61,9 @@ pub fn last_error() -> Error {
     let s: String = if res == 0 {
         format!("Error code {}", errno).to_string()
     } else {
-        unsafe { U16CString::from_ptr_str(buf).to_string_lossy() }
+        let s = unsafe { U16CString::from_ptr_str(buf).to_string_lossy() };
+        unsafe { LocalFree(buf as _) };
+        s
     };
     Error::from(ErrorKind::WinAPIError { s })
 }
