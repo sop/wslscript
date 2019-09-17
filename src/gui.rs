@@ -164,13 +164,13 @@ impl MainWindow {
     fn run(&self) -> Result<(), Error> {
         loop {
             let mut msg: MSG = unsafe { zeroed() };
-            match unsafe { GetMessageW(&mut msg, self.window, 0, 0) } {
-                x if x > 0 => {
+            match unsafe { GetMessageW(&mut msg, null_mut(), 0, 0) } {
+                1..=std::i32::MAX => {
                     unsafe { TranslateMessage(&msg) };
                     unsafe { DispatchMessageW(&msg) };
                 }
-                x if x < 0 => Err(last_error())?,
-                _ => break,
+                std::i32::MIN..=-1 => Err(last_error())?,
+                0 => break,
             }
         }
         Ok(())
