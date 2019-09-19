@@ -41,7 +41,7 @@ fn run_app() -> Result<(), Error> {
         if let Some(arg) = env::args_os().nth(1) {
             let path = PathBuf::from(&arg);
             if path.exists() && path.extension().and_then(OsStr::to_str) == Some("sh") {
-                return execute_wsl(vec![arg]);
+                return execute_wsl(vec![arg], wsl::WSLOptions::default());
             }
         }
     }
@@ -51,13 +51,14 @@ fn run_app() -> Result<(), Error> {
         .skip(1)
         .collect();
     if !wsl_args.is_empty() {
-        return execute_wsl(wsl_args);
+        let opts: Vec<OsString> = env::args_os().take_while(|arg| arg != "-E").collect();
+        return execute_wsl(wsl_args, wsl::WSLOptions::from_args(opts));
     }
     // start Windows GUI
     gui::start_gui()
 }
 
-fn execute_wsl(args: Vec<OsString>) -> Result<(), Error> {
+fn execute_wsl(args: Vec<OsString>, opts: wsl::WSLOptions) -> Result<(), Error> {
     // convert args to paths, canonicalize when possible
     let paths: Vec<PathBuf> = args
         .iter()
@@ -66,5 +67,5 @@ fn execute_wsl(args: Vec<OsString>) -> Result<(), Error> {
         .collect();
     // convert paths to WSL equivalents
     let wsl_paths = wsl::paths_to_wsl(&paths)?;
-    wsl::run_wsl(&wsl_paths[0], &wsl_paths[1..])
+    wsl::run_wsl(&wsl_paths[0], &wsl_paths[1..], opts)
 }

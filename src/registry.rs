@@ -1,5 +1,8 @@
 use crate::error::*;
 use crate::icon::ShellIcon;
+use std::ffi::OsString;
+use wchar::wch_c;
+use widestring::{U16CStr, U16CString};
 use winreg::enums::*;
 use winreg::transaction::Transaction;
 use winreg::RegKey;
@@ -11,7 +14,54 @@ const CLASSES_SUBKEY: &str = "Software\\Classes";
 pub struct ExtConfig {
     // filetype extension without leading dot
     pub extension: String,
-    pub icon: ShellIcon,
+    pub icon: Option<ShellIcon>,
+    pub hold_mode: HoldMode,
+}
+
+#[derive(Clone, Copy, PartialEq)]
+pub enum HoldMode {
+    Never,  // always close terminal window on exit
+    Always, // always wait for keypress on exit
+    Error,  // wait for keypress when exit code != 0
+}
+
+impl HoldMode {
+    const CSTR_NEVER: &'static [u16] = wch_c!("never");
+    const CSTR_ALWAYS: &'static [u16] = wch_c!("always");
+    const CSTR_ERROR: &'static [u16] = wch_c!("error");
+
+    pub fn from_cstr(s: &U16CStr) -> Option<Self> {
+        match s.as_slice_with_nul() {
+            Self::CSTR_NEVER => Some(Self::Never),
+            Self::CSTR_ALWAYS => Some(Self::Always),
+            Self::CSTR_ERROR => Some(Self::Error),
+            _ => None,
+        }
+    }
+
+    pub fn from_str(s: &str) -> Option<Self> {
+        U16CString::from_str(s)
+            .ok()
+            .and_then(|s| Self::from_cstr(&s))
+    }
+
+    pub fn as_cstr(self) -> &'static U16CStr {
+        match self {
+            Self::Never => unsafe { U16CStr::from_slice_with_nul_unchecked(Self::CSTR_NEVER) },
+            Self::Always => unsafe { U16CStr::from_slice_with_nul_unchecked(Self::CSTR_ALWAYS) },
+            Self::Error => unsafe { U16CStr::from_slice_with_nul_unchecked(Self::CSTR_ERROR) },
+        }
+    }
+
+    pub fn as_string(self) -> String {
+        self.as_cstr().to_string_lossy()
+    }
+}
+
+impl Default for HoldMode {
+    fn default() -> Self {
+        Self::Error
+    }
 }
 
 /// Registers WSL Script as a handler for given file extension.
@@ -37,36 +87,47 @@ pub fn register_extension(config: &ExtConfig) -> Result<(), Error> {
         key.delete_subkey_all("")
             .map_err(|e| ErrorKind::RegistryError { e })?;
     }
+    let hold_mode = config.hold_mode.as_string();
     let exe_os = std::env::current_exe()?.canonicalize()?;
     // shell handler doesn't recognize UNC format
     let executable = exe_os
         .to_str()
         .ok_or_else(|| ErrorKind::StringToPathUTF8Error)?
         .trim_start_matches("\\\\?\\");
-    let cmd = format!("\"{}\" -E \"%0\" %*", executable);
-    let icon = config.icon.shell_path().to_os_string();
+    let cmd = format!("\"{}\" -h {} -E \"%0\" %*", executable, hold_mode);
+    let icon: Option<OsString> = config
+        .icon
+        .as_ref()
+        .and_then(|icon| Some(icon.shell_path().to_os_string()));
     let handler_desc = format!("WSL Shell Script (.{})", ext);
     // Software\Classes\wslscript.ext
     set_value(&tx, &base, &handler_name, "", &handler_desc)?;
     set_value(&tx, &base, &handler_name, "EditFlags", &0x30u32)?;
     set_value(&tx, &base, &handler_name, "FriendlyTypeName", &handler_desc)?;
+    set_value(&tx, &base, &handler_name, "HoldMode", &hold_mode)?;
     // Software\Classes\wslscript.ext\DefaultIcon
-    let path = format!("{}\\DefaultIcon", handler_name);
-    set_value(&tx, &base, &path, "", &icon.as_os_str())?;
+    if let Some(s) = &icon {
+        let path = format!("{}\\DefaultIcon", handler_name);
+        set_value(&tx, &base, &path, "", &s.as_os_str())?;
+    }
     // Software\Classes\wslscript.ext\shell
     let path = format!("{}\\shell", handler_name);
     set_value(&tx, &base, &path, "", &"open")?;
     // Software\Classes\wslscript.ext\shell\open - Open command
     let path = format!("{}\\shell\\open", handler_name);
     set_value(&tx, &base, &path, "", &"Run in WSL")?;
-    set_value(&tx, &base, &path, "Icon", &icon.as_os_str())?;
+    if let Some(s) = &icon {
+        set_value(&tx, &base, &path, "Icon", &s.as_os_str())?;
+    }
     // Software\Classes\wslscript.ext\shell\open\command
     let path = format!("{}\\shell\\open\\command", handler_name);
     set_value(&tx, &base, &path, "", &cmd)?;
     // Software\Classes\wslscript.ext\shell\runas - Run as administrator
     let path = format!("{}\\shell\\runas", handler_name);
-    set_value(&tx, &base, &path, "Icon", &icon.as_os_str())?;
     set_value(&tx, &base, &path, "Extended", &"")?;
+    if let Some(s) = &icon {
+        set_value(&tx, &base, &path, "Icon", &s.as_os_str())?;
+    }
     // Software\Classes\wslscript.ext\shell\runas\command
     let path = format!("{}\\shell\\runas\\command", handler_name);
     set_value(&tx, &base, &path, "", &cmd)?;
@@ -182,6 +243,30 @@ pub fn query_registered_extensions() -> Result<Vec<String>, Error> {
     Ok(extensions)
 }
 
+pub fn get_extension_config(ext: &str) -> Result<ExtConfig, Error> {
+    let handler_key = RegKey::predef(HKEY_CURRENT_USER)
+        .open_subkey(CLASSES_SUBKEY)
+        .map_err(|e| ErrorKind::RegistryError { e })?
+        .open_subkey(format!("{}.{}", HANDLER_PREFIX, ext))
+        .map_err(|e| ErrorKind::RegistryError { e })?;
+    let mut icon: Option<ShellIcon> = None;
+    if let Ok(key) = handler_key.open_subkey("DefaultIcon") {
+        if let Ok(s) = key.get_value::<String, _>("") {
+            icon = s.parse::<ShellIcon>().ok();
+        }
+    }
+    let hold_mode = handler_key
+        .get_value::<String, _>("HoldMode")
+        .ok()
+        .and_then(|s| HoldMode::from_str(&s))
+        .unwrap_or_default();
+    Ok(ExtConfig {
+        extension: ext.to_owned(),
+        icon,
+        hold_mode,
+    })
+}
+
 pub fn is_extension_registered_for_wsl(ext: &str) -> Result<bool, Error> {
     let base = RegKey::predef(HKEY_CURRENT_USER)
         .open_subkey(CLASSES_SUBKEY)
@@ -208,20 +293,6 @@ pub fn is_registered_for_other(ext: &str) -> Result<bool, Error> {
         }
     }
     Ok(false)
-}
-
-pub fn get_extension_icon_path(ext: &str) -> Result<ShellIcon, Error> {
-    let base = RegKey::predef(HKEY_CURRENT_USER)
-        .open_subkey(CLASSES_SUBKEY)
-        .map_err(|e| ErrorKind::RegistryError { e })?;
-    let handler_name = format!("{}.{}", HANDLER_PREFIX, ext);
-    let key = base
-        .open_subkey(format!("{}\\DefaultIcon", handler_name))
-        .map_err(|e| ErrorKind::RegistryError { e })?;
-    let s = key
-        .get_value::<String, _>("")
-        .map_err(|e| ErrorKind::RegistryError { e })?;
-    s.parse::<ShellIcon>()
 }
 
 /*

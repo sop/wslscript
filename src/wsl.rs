@@ -1,4 +1,5 @@
 use crate::error::*;
+use crate::registry::HoldMode;
 use failure::ResultExt;
 use std::env;
 use std::ffi::{OsStr, OsString};
@@ -6,12 +7,13 @@ use std::os::windows::ffi::{OsStrExt, OsStringExt};
 use std::os::windows::process::CommandExt;
 use std::path::PathBuf;
 use std::process::{self, Stdio};
+use widestring::U16CString;
 use winapi::um::winbase;
 
 /// Run script with optional arguments in a WSL.
 ///
 /// Paths must be in WSL context.
-pub fn run_wsl(script_path: &PathBuf, args: &[PathBuf]) -> Result<(), Error> {
+pub fn run_wsl(script_path: &PathBuf, args: &[PathBuf], opts: WSLOptions) -> Result<(), Error> {
     // TODO: ensure not trying to invoke self
     let script_dir = script_path
         .parent()
@@ -34,8 +36,20 @@ pub fn run_wsl(script_path: &PathBuf, args: &[PathBuf]) -> Result<(), Error> {
         bash_cmd.push(single_quote_escape(arg.as_os_str()));
         bash_cmd.push("'");
     }
-    // pause if the script exits with an error
-    bash_cmd.push(" || { printf >&2 '\\n[Process exited - exit code %d] ' \"$?\"; read -n 1 -s; }");
+    match opts.hold_mode {
+        HoldMode::Never => {}
+        HoldMode::Always | HoldMode::Error => {
+            if opts.hold_mode == HoldMode::Always {
+                bash_cmd.push(";");
+            } else {
+                bash_cmd.push(" ||")
+            }
+            bash_cmd.push(
+                " { printf >&2 '\\n[Process exited - exit code %d] ' \"$?\"; \
+                 read -n 1 -s; }",
+            );
+        }
+    }
     // build command to start WSL process
     let mut cmd = process::Command::new(cmd_bin_path().as_os_str());
     cmd.arg("/C");
@@ -132,4 +146,35 @@ fn wsl_bin_path() -> Result<PathBuf, Error> {
     }
     // no dice
     Err(ErrorKind::WSLNotFound)?
+}
+
+pub struct WSLOptions {
+    hold_mode: HoldMode,
+}
+
+impl WSLOptions {
+    pub fn from_args(args: Vec<OsString>) -> Self {
+        let mut hold_mode = HoldMode::default();
+        let mut iter = args.iter();
+        while let Some(arg) = iter.next() {
+            if arg == "-h" {
+                if let Some(mode) = iter
+                    .next()
+                    .and_then(|s| U16CString::from_os_str(s).ok())
+                    .and_then(|s| HoldMode::from_cstr(&s))
+                {
+                    hold_mode = mode;
+                }
+            }
+        }
+        Self { hold_mode }
+    }
+}
+
+impl Default for WSLOptions {
+    fn default() -> Self {
+        Self {
+            hold_mode: HoldMode::default(),
+        }
+    }
 }
