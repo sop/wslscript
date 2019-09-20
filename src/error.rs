@@ -1,6 +1,6 @@
-use crate::ustr;
+use crate::wcstr;
 use std::fmt::{self, Display};
-use widestring::U16CString;
+use widestring::*;
 
 #[derive(Debug, Fail)]
 pub enum ErrorKind {
@@ -18,6 +18,9 @@ pub enum ErrorKind {
 
     #[fail(display = "Invalid path.")]
     InvalidPathError,
+
+    #[fail(display = "String is not nul terminated.")]
+    MissingNulError,
 
     #[fail(display = "Registry error: {}", e)]
     RegistryError { e: std::io::Error },
@@ -42,8 +45,8 @@ impl Error {
         format!("{}", self)
     }
 
-    pub fn to_wide(&self) -> U16CString {
-        ustr!(self.to_string())
+    pub fn to_wide(&self) -> WideCString {
+        wcstr!(self.to_string())
     }
 }
 
@@ -64,6 +67,12 @@ impl From<failure::Context<ErrorKind>> for Error {
 impl From<std::io::Error> for Error {
     fn from(e: std::io::Error) -> Error {
         Error::from(ErrorKind::IOError { e })
+    }
+}
+
+impl From<widestring::MissingNulError<WideChar>> for Error {
+    fn from(_: widestring::MissingNulError<WideChar>) -> Error {
+        Error::from(ErrorKind::MissingNulError)
     }
 }
 

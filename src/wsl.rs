@@ -7,14 +7,14 @@ use std::os::windows::ffi::{OsStrExt, OsStringExt};
 use std::os::windows::process::CommandExt;
 use std::path::PathBuf;
 use std::process::{self, Stdio};
-use widestring::U16CString;
+use wchar::*;
+use widestring::*;
 use winapi::um::winbase;
 
 /// Run script with optional arguments in a WSL.
 ///
 /// Paths must be in WSL context.
 pub fn run_wsl(script_path: &PathBuf, args: &[PathBuf], opts: WSLOptions) -> Result<(), Error> {
-    // TODO: ensure not trying to invoke self
     let script_dir = script_path
         .parent()
         .ok_or_else(|| ErrorKind::InvalidPathError)?
@@ -23,41 +23,44 @@ pub fn run_wsl(script_path: &PathBuf, args: &[PathBuf], opts: WSLOptions) -> Res
         .file_name()
         .ok_or_else(|| ErrorKind::InvalidPathError)?;
     // command line to invoke in WSL
-    let mut bash_cmd = OsString::new();
+    let mut bash_cmd = WideString::new();
     // cd 'dir' && './progname'
-    bash_cmd.push("cd '");
-    bash_cmd.push(single_quote_escape(script_dir));
-    bash_cmd.push("' && './");
-    bash_cmd.push(single_quote_escape(script_file));
-    bash_cmd.push("'");
+    bash_cmd.push_slice(wch!("cd '"));
+    bash_cmd.push_os_str(single_quote_escape(script_dir));
+    bash_cmd.push_slice(wch!("' && './"));
+    bash_cmd.push_os_str(single_quote_escape(script_file));
+    bash_cmd.push_slice(wch!("'"));
     // arguments from drag & drop
     for arg in args {
-        bash_cmd.push(" '");
-        bash_cmd.push(single_quote_escape(arg.as_os_str()));
-        bash_cmd.push("'");
+        bash_cmd.push_slice(wch!(" '"));
+        bash_cmd.push_os_str(single_quote_escape(arg.as_os_str()));
+        bash_cmd.push_slice(wch!("'"));
     }
+    // commands after script exits
     match opts.hold_mode {
         HoldMode::Never => {}
         HoldMode::Always | HoldMode::Error => {
             if opts.hold_mode == HoldMode::Always {
-                bash_cmd.push(";");
+                bash_cmd.push_slice(wch!(";"));
             } else {
-                bash_cmd.push(" ||")
+                bash_cmd.push_slice(wch!(" ||"))
             }
-            bash_cmd.push(
+            bash_cmd.push_os_str(OsString::from_wide(wch!(
                 " { printf >&2 '\\n[Process exited - exit code %d] ' \"$?\"; \
-                 read -n 1 -s; }",
-            );
+                 read -n 1 -s; }"
+            )));
         }
     }
     // build command to start WSL process
     let mut cmd = process::Command::new(cmd_bin_path().as_os_str());
-    cmd.arg("/C");
-    cmd.arg(wsl_bin_path()?.as_os_str());
-    cmd.arg("-e");
-    cmd.arg("bash");
-    cmd.arg("-c");
-    cmd.arg(bash_cmd);
+    cmd.args(&[
+        OsStr::new("/C"),
+        wsl_bin_path()?.as_os_str(),
+        OsStr::new("-e"),
+        OsStr::new("bash"),
+        OsStr::new("-c"),
+        &bash_cmd.to_os_string(),
+    ]);
     // start as a detached process in a new process group so we can safely
     // exit this program and have the script execute on it's own
     cmd.creation_flags(winbase::DETACHED_PROCESS | winbase::CREATE_NEW_PROCESS_GROUP);
@@ -75,7 +78,7 @@ fn single_quote_escape(s: &OsStr) -> OsString {
     for c in s.encode_wide() {
         // escape ' to '\''
         if c == '\'' as u16 {
-            w.extend_from_slice(&['\'' as u16, '\\' as u16, '\'' as u16, '\'' as u16]);
+            w.extend_from_slice(wch!("'\\''"));
         } else {
             w.push(c);
         }
@@ -84,22 +87,32 @@ fn single_quote_escape(s: &OsStr) -> OsString {
 }
 
 /// Convert Windows paths to WSL equivalents.
+///
+/// Multiple paths can be converted on a single WSL invocation.
+/// Converted paths are returned in the same order as given.
 pub fn paths_to_wsl(paths: &[PathBuf]) -> Result<Vec<PathBuf>, Error> {
-    // compose arguments for bash printf
-    let printf_args: Vec<String> = paths
+    // build a printf command that prints null separated results
+    let mut printf_cmd = WideString::new();
+    printf_cmd.push_slice(wch!("printf '%s\\0'"));
+    paths
         .iter()
         .map(|path| {
-            // escape single quotes
-            let escaped = path.to_string_lossy().replace("'", "'\\''");
-            // each printf argument is a subshell with wslpath invocation
-            format!("\"$(wslpath -u '{}')\"", escaped)
+            // execute wslpath for each argument in subprocess
+            let mut s = WideString::new();
+            s.push_slice(wch!(" \"$(wslpath -u '"));
+            s.push_os_str(single_quote_escape(path.as_os_str()));
+            s.push_slice(wch!("')\""));
+            s
         })
-        .collect();
-    // format with null separators
-    let printf_cmd = format!("printf '%s\\0' {}", printf_args.join(" "));
+        .for_each(|s| printf_cmd.push(s));
     let mut cmd = process::Command::new(wsl_bin_path()?);
     cmd.creation_flags(winbase::CREATE_NO_WINDOW);
-    cmd.args(&["-e", "bash", "-c", &printf_cmd]);
+    cmd.args(&[
+        OsStr::new("-e"),
+        OsStr::new("bash"),
+        OsStr::new("-c"),
+        &printf_cmd.to_os_string(),
+    ]);
     let output = cmd.output().context(ErrorKind::WinToUnixPathError)?;
     if !output.status.success() {
         Err(ErrorKind::WinToUnixPathError)?
@@ -116,16 +129,15 @@ pub fn paths_to_wsl(paths: &[PathBuf]) -> Result<Vec<PathBuf>, Error> {
 /// Returns the path to Windows command prompt executable.
 fn cmd_bin_path() -> PathBuf {
     // if %COMSPEC% points to existing file
-    if let Ok(path) = env::var("COMSPEC") {
-        let p = PathBuf::from(path);
-        if p.is_file() {
-            return p;
-        }
+    if let Some(p) = env::var_os("COMSPEC")
+        .map(PathBuf::from)
+        .filter(|p| p.is_file())
+    {
+        return p;
     }
     // try %SYSTEMROOT\System32\cmd.exe
-    if let Ok(root) = env::var("SYSTEMROOT") {
-        let mut p = PathBuf::from(root);
-        p.push("System32\\cmd.exe");
+    if let Some(mut p) = env::var_os("SYSTEMROOT").map(PathBuf::from) {
+        p.push(r#"System32\cmd.exe"#);
         if p.is_file() {
             return p;
         }
@@ -137,17 +149,17 @@ fn cmd_bin_path() -> PathBuf {
 /// Returns the path to WSL executable.
 fn wsl_bin_path() -> Result<PathBuf, Error> {
     // try %SYSTEMROOT\System32\wsl.exe
-    if let Ok(root) = env::var("SYSTEMROOT") {
-        let mut p = PathBuf::from(root);
-        p.push("System32\\wsl.exe");
+    if let Some(mut p) = env::var_os("SYSTEMROOT").map(PathBuf::from) {
+        p.push(r#"System32\wsl.exe"#);
         if p.is_file() {
             return Ok(p);
         }
     }
     // no dice
-    Err(ErrorKind::WSLNotFound)?
+    Err(Error::from(ErrorKind::WSLNotFound))
 }
 
+/// Options for WSL invocation
 pub struct WSLOptions {
     hold_mode: HoldMode,
 }
@@ -160,8 +172,8 @@ impl WSLOptions {
             if arg == "-h" {
                 if let Some(mode) = iter
                     .next()
-                    .and_then(|s| U16CString::from_os_str(s).ok())
-                    .and_then(|s| HoldMode::from_cstr(&s))
+                    .and_then(|s| WideCString::from_os_str(s).ok())
+                    .and_then(|s| HoldMode::from_wcstr(&s))
                 {
                     hold_mode = mode;
                 }

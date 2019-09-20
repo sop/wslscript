@@ -3,19 +3,19 @@ use std::convert::From;
 use std::ops::{Deref, DerefMut};
 use std::path::PathBuf;
 use std::ptr::null_mut;
-use wchar::wch_c;
-use widestring::{U16CStr, U16CString};
+use wchar::*;
+use widestring::*;
 use winapi::shared::minwindef::*;
 use winapi::um::winnt::*;
 
 #[macro_export]
-macro_rules! ustr {
+macro_rules! wcstr {
     ($x:expr) => {
-        U16CString::from_str($x).unwrap_or_else(|e| {
+        WideCString::from_str($x).unwrap_or_else(|e| {
             let p = e.nul_position();
             let mut v = e.into_vec();
             v.resize(p, 0);
-            U16CString::new(v).unwrap()
+            WideCString::new(v).unwrap()
         })
     };
 }
@@ -24,12 +24,12 @@ macro_rules! ustr {
 mod tests {
     use super::*;
     #[test]
-    fn test_ustr_with_null() {
-        assert_eq!(ustr!("with\0null"), ustr!("with"));
+    fn test_wcstr_with_null() {
+        assert_eq!(wcstr!("with\0null"), wcstr!("with"));
     }
 }
 
-pub fn error_message(msg: &U16CStr) {
+pub fn error_message(msg: &WideCStr) {
     use winapi::um::winuser::{MessageBoxW, MB_ICONERROR, MB_OK};
     unsafe {
         MessageBoxW(
@@ -61,7 +61,7 @@ pub fn last_error() -> Error {
     let s: String = if res == 0 {
         format!("Error code {}", errno).to_string()
     } else {
-        let s = unsafe { U16CString::from_ptr_str(buf).to_string_lossy() };
+        let s = unsafe { WideCString::from_ptr_str(buf).to_string_lossy() };
         unsafe { LocalFree(buf as _) };
         s
     };
@@ -74,8 +74,8 @@ pub struct WinPathBuf {
 }
 
 impl WinPathBuf {
-    pub fn to_wide(&self) -> U16CString {
-        unsafe { U16CString::from_os_str_unchecked(self.buf.as_os_str()) }
+    pub fn to_wide(&self) -> WideCString {
+        unsafe { WideCString::from_os_str_unchecked(self.buf.as_os_str()) }
     }
 
     pub fn expand(&self) -> Result<WinPathBuf, Error> {
@@ -90,7 +90,7 @@ impl WinPathBuf {
         if len == 0 {
             return Err(last_error());
         }
-        let path = unsafe { U16CString::from_ptr_with_nul_unchecked(buf.as_ptr(), len as usize) };
+        let path = unsafe { WideCString::from_ptr_with_nul_unchecked(buf.as_ptr(), len as usize) };
         let len = unsafe {
             winapi::um::fileapi::GetLongPathNameW(
                 path.as_ptr(),
@@ -102,13 +102,19 @@ impl WinPathBuf {
             return Err(last_error());
         }
         let path =
-            unsafe { U16CString::from_ptr_with_nul_unchecked(buf.as_ptr(), (len + 1) as usize) };
+            unsafe { WideCString::from_ptr_with_nul_unchecked(buf.as_ptr(), (len + 1) as usize) };
         Ok(Self::from(path.as_ucstr()))
     }
 }
 
-impl From<&U16CStr> for WinPathBuf {
-    fn from(s: &U16CStr) -> Self {
+impl From<&WideCStr> for WinPathBuf {
+    fn from(s: &WideCStr) -> Self {
+        Self::from(WideStr::from_slice(s.as_slice()))
+    }
+}
+
+impl From<&WideStr> for WinPathBuf {
+    fn from(s: &WideStr) -> Self {
         Self {
             buf: PathBuf::from(s.to_os_string()),
         }

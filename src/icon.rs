@@ -2,6 +2,7 @@ use crate::error::*;
 use crate::win32::*;
 use std::ptr::null_mut;
 use std::str::FromStr;
+use wchar::*;
 use widestring::*;
 use winapi::shared::windef::*;
 use winapi::um::libloaderapi::*;
@@ -39,13 +40,21 @@ impl ShellIcon {
         })
     }
 
+    /// Load default icon.
     pub fn load_default() -> Result<Self, Error> {
-        let exe_os = std::env::current_exe()?.canonicalize()?;
-        let executable = exe_os
-            .to_str()
-            .ok_or_else(|| ErrorKind::StringToPathUTF8Error)?
-            .trim_start_matches("\\\\?\\");
-        Self::load(WinPathBuf::from(executable), 0)
+        use std::os::windows::ffi::OsStrExt;
+        let s: Vec<WideChar> = std::env::current_exe()?
+            .canonicalize()?
+            .as_os_str()
+            .encode_wide()
+            .collect();
+        // remove UNC prefix
+        let ws = if &s[0..4] == wch!(r#"\\?\"#) {
+            WideStr::from_slice(&s[4..])
+        } else {
+            WideStr::from_slice(&s)
+        };
+        Self::load(WinPathBuf::from(ws), 0)
     }
 
     pub fn handle(&self) -> HICON {
@@ -60,10 +69,10 @@ impl ShellIcon {
         self.index
     }
 
-    pub fn shell_path(&self) -> U16CString {
+    pub fn shell_path(&self) -> WideCString {
         let mut p = self.path.to_wide().to_os_string();
         p.push(format!(",{}", self.index));
-        unsafe { U16CString::from_os_str_unchecked(p) }
+        unsafe { WideCString::from_os_str_unchecked(p) }
     }
 }
 

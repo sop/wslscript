@@ -1,8 +1,8 @@
 use crate::error::*;
 use crate::icon::ShellIcon;
 use std::ffi::OsString;
-use wchar::wch_c;
-use widestring::{U16CStr, U16CString};
+use wchar::*;
+use widestring::*;
 use winreg::enums::*;
 use winreg::transaction::Transaction;
 use winreg::RegKey;
@@ -26,35 +26,39 @@ pub enum HoldMode {
 }
 
 impl HoldMode {
-    const CSTR_NEVER: &'static [u16] = wch_c!("never");
-    const CSTR_ALWAYS: &'static [u16] = wch_c!("always");
-    const CSTR_ERROR: &'static [u16] = wch_c!("error");
+    const WCSTR_NEVER: &'static [WideChar] = wch_c!("never");
+    const WCSTR_ALWAYS: &'static [WideChar] = wch_c!("always");
+    const WCSTR_ERROR: &'static [WideChar] = wch_c!("error");
 
-    pub fn from_cstr(s: &U16CStr) -> Option<Self> {
+    /// Create from nul terminated wide string
+    pub fn from_wcstr(s: &WideCStr) -> Option<Self> {
         match s.as_slice_with_nul() {
-            Self::CSTR_NEVER => Some(Self::Never),
-            Self::CSTR_ALWAYS => Some(Self::Always),
-            Self::CSTR_ERROR => Some(Self::Error),
+            Self::WCSTR_NEVER => Some(Self::Never),
+            Self::WCSTR_ALWAYS => Some(Self::Always),
+            Self::WCSTR_ERROR => Some(Self::Error),
             _ => None,
         }
     }
 
+    /// Create from &str
     pub fn from_str(s: &str) -> Option<Self> {
-        U16CString::from_str(s)
+        WideCString::from_str(s)
             .ok()
-            .and_then(|s| Self::from_cstr(&s))
+            .and_then(|s| Self::from_wcstr(&s))
     }
 
-    pub fn as_cstr(self) -> &'static U16CStr {
+    /// Get mode string as a nul terminated wide string
+    pub fn as_wcstr(self) -> &'static WideCStr {
         match self {
-            Self::Never => unsafe { U16CStr::from_slice_with_nul_unchecked(Self::CSTR_NEVER) },
-            Self::Always => unsafe { U16CStr::from_slice_with_nul_unchecked(Self::CSTR_ALWAYS) },
-            Self::Error => unsafe { U16CStr::from_slice_with_nul_unchecked(Self::CSTR_ERROR) },
+            Self::Never => unsafe { WideCStr::from_slice_with_nul_unchecked(Self::WCSTR_NEVER) },
+            Self::Always => unsafe { WideCStr::from_slice_with_nul_unchecked(Self::WCSTR_ALWAYS) },
+            Self::Error => unsafe { WideCStr::from_slice_with_nul_unchecked(Self::WCSTR_ERROR) },
         }
     }
 
+    /// Get mode as a utf-8 string
     pub fn as_string(self) -> String {
-        self.as_cstr().to_string_lossy()
+        self.as_wcstr().to_string_lossy()
     }
 }
 

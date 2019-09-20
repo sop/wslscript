@@ -2,7 +2,7 @@ use crate::error::*;
 use crate::win32::*;
 use std::mem::{size_of, zeroed};
 use std::ptr::null_mut;
-use winapi::shared::minwindef::FALSE as W_FALSE;
+use winapi::shared::minwindef as win;
 use winapi::shared::windef::*;
 use winapi::um::wingdi::*;
 use winapi::um::winuser::*;
@@ -21,7 +21,7 @@ impl Font {
             cbSize: size_of::<NONCLIENTMETRICSW>() as u32,
             ..unsafe { zeroed() }
         };
-        if W_FALSE
+        if win::FALSE
             == unsafe {
                 SystemParametersInfoW(
                     SPI_GETNONCLIENTMETRICS,

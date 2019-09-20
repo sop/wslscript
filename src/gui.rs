@@ -2,15 +2,15 @@ use crate::error::*;
 use crate::font::Font;
 use crate::icon::ShellIcon;
 use crate::registry;
-use crate::ustr;
+use crate::wcstr;
 use crate::win32::*;
 use num_derive::{FromPrimitive, ToPrimitive};
 use num_traits::{FromPrimitive, ToPrimitive};
 use std::mem::{size_of, zeroed};
 use std::pin::Pin;
 use std::ptr::null_mut;
-use wchar::wch_c;
-use widestring::{U16CStr, U16CString};
+use wchar::*;
+use widestring::*;
 use winapi::shared::basetsd::*;
 use winapi::shared::minwindef::{self as win, *};
 use winapi::shared::ntdef::*;
@@ -124,7 +124,7 @@ enum MenuItem {
 impl MainWindow {
     /// Create application window.
     ///
-    fn new(title: &[u16]) -> Result<Pin<Box<Self>>, Error> {
+    fn new(title: &[WCHAR]) -> Result<Pin<Box<Self>>, Error> {
         let wnd = Pin::new(Box::new(Self::default()));
         let instance = unsafe { GetModuleHandleW(null_mut()) };
         let class_name = wch_c!("WSLScript");
@@ -239,7 +239,7 @@ impl MainWindow {
         #[rustfmt::skip]
         let hwnd = unsafe { CreateWindowExW(
             LVS_EX_FULLROWSELECT | LVS_EX_GRIDLINES,
-            ustr!(WC_LISTVIEW).as_ptr(), null_mut(),
+            wcstr!(WC_LISTVIEW).as_ptr(), null_mut(),
             WS_CHILD | WS_VISIBLE | WS_BORDER | LVS_REPORT | LVS_SINGLESEL | LVS_SHOWSELALWAYS,
             0, 0, 0, 0, self.window,
             Control::ListViewExtensions.to_u16().unwrap() as HMENU, instance, null_mut(),
@@ -258,7 +258,7 @@ impl MainWindow {
         match registry::query_registered_extensions() {
             Ok(exts) => {
                 for (i, ext) in exts.iter().enumerate() {
-                    let s = ustr!(ext);
+                    let s = wcstr!(ext);
                     let lvi = LV_ITEMW {
                         mask: LVIF_TEXT,
                         iItem: i as i32,
@@ -269,7 +269,7 @@ impl MainWindow {
                 }
             }
             Err(e) => {
-                let s = ustr!(format!("Failed to query registry: {}", e));
+                let s = wcstr!(format!("Failed to query registry: {}", e));
                 error_message(&s);
             }
         }
@@ -302,7 +302,7 @@ impl MainWindow {
             Control::HoldModeCombo.to_u16().unwrap() as HMENU, instance, null_mut()
         ) };
         Self::set_window_font(hwnd, &self.caption_font);
-        let insert_item = |mode: registry::HoldMode, label: &[u16]| {
+        let insert_item = |mode: registry::HoldMode, label: &WideCStr| {
             let idx = unsafe {
                 SendMessageW(
                     hwnd,
@@ -311,12 +311,21 @@ impl MainWindow {
                     label.as_ptr() as LPARAM,
                 )
             };
-            let s = mode.as_cstr();
+            let s = mode.as_wcstr();
             unsafe { SendMessageW(hwnd, CB_SETITEMDATA, idx as WPARAM, s.as_ptr() as LPARAM) };
         };
-        insert_item(registry::HoldMode::Error, wch_c!("Close on success"));
-        insert_item(registry::HoldMode::Never, wch_c!("Always close"));
-        insert_item(registry::HoldMode::Always, wch_c!("Keep open"));
+        insert_item(
+            registry::HoldMode::Error,
+            WideCStr::from_slice_with_nul(wch_c!("Close on success"))?,
+        );
+        insert_item(
+            registry::HoldMode::Never,
+            WideCStr::from_slice_with_nul(wch_c!("Always close"))?,
+        );
+        insert_item(
+            registry::HoldMode::Always,
+            WideCStr::from_slice_with_nul(wch_c!("Keep open"))?,
+        );
 
         // hold mode label
         #[rustfmt::skip]
@@ -353,7 +362,7 @@ impl MainWindow {
         if let Some(mut ext) = self.get_current_extension() {
             // TODO: check that extension is registered for current executable
             ext.insert_str(0, ".");
-            unsafe { SetWindowTextW(hwnd, ustr!(ext).as_ptr()) };
+            unsafe { SetWindowTextW(hwnd, wcstr!(ext).as_ptr()) };
             Self::set_window_font(hwnd, &self.ext_font);
         } else {
             let s = wch_c!(
@@ -492,7 +501,7 @@ impl MainWindow {
             return Ok(0);
         }
         if registry::is_registered_for_other(&ext)? {
-            let s = ustr!(format!(
+            let s = wcstr!(format!(
                 ".{} extension is already registered for another application.\n\
                  Register anyway?",
                 ext
@@ -527,7 +536,7 @@ impl MainWindow {
         let idx = self.listview_find_ext(&ext).or_else(|| {
             // insert to listview
             let hwnd = self.get_control_handle(Control::ListViewExtensions);
-            let s = ustr!(ext);
+            let s = wcstr!(ext);
             let lvi = LV_ITEMW {
                 mask: LVIF_TEXT,
                 iItem: 0,
@@ -566,7 +575,7 @@ impl MainWindow {
                 let idx: usize = self.get_menu_data(hmenu);
                 if let Some(ext) = self.get_listview_item_text(idx) {
                     if let Err(e) = registry::unregister_extension(&ext) {
-                        let s = ustr!(format!("Failed to unregister extension: {}", e));
+                        let s = wcstr!(format!("Failed to unregister extension: {}", e));
                         error_message(&s);
                         return 0;
                     }
@@ -675,7 +684,7 @@ impl MainWindow {
     /// Get listview text by index.
     ///
     fn get_listview_item_text(&self, index: usize) -> Option<String> {
-        let mut buf: Vec<u16> = Vec::with_capacity(32);
+        let mut buf: Vec<WCHAR> = Vec::with_capacity(32);
         let lvi = LV_ITEMW {
             pszText: buf.as_mut_ptr(),
             cchTextMax: buf.capacity() as i32,
@@ -686,14 +695,14 @@ impl MainWindow {
             let len = SendMessageW(hwnd, LVM_GETITEMTEXTW, index, &lvi as *const _ as LPARAM);
             buf.set_len(len as usize);
         };
-        U16CString::new(buf).ok().map(|u| u.to_string_lossy())
+        WideCString::new(buf).ok().map(|u| u.to_string_lossy())
     }
 
     /// Find extension from listview.
     ///
     /// Returns listview index or None if extension wasn't found.
     fn listview_find_ext(&self, ext: &str) -> Option<usize> {
-        let s = ustr!(ext);
+        let s = wcstr!(ext);
         let lvf = LVFINDINFOW {
             flags: LVFI_STRING,
             psz: s.as_ptr(),
@@ -723,7 +732,7 @@ impl MainWindow {
     /// Get text from extension text input.
     ///
     fn get_extension_input_text(&self) -> String {
-        let mut buf: Vec<u16> = Vec::with_capacity(32);
+        let mut buf: Vec<WCHAR> = Vec::with_capacity(32);
         unsafe {
             let len = GetDlgItemTextW(
                 self.window,
@@ -733,7 +742,7 @@ impl MainWindow {
             );
             buf.set_len(len as usize);
         }
-        U16CString::new(buf).unwrap().to_string_lossy()
+        WideCString::new(buf).unwrap().to_string_lossy()
     }
 
     /// Set extension that is currently selected for edit.
@@ -776,7 +785,7 @@ impl MainWindow {
         match buf.iter().position(|&c| c == 0) {
             Some(pos) => {
                 let path =
-                    unsafe { U16CString::from_vec_with_nul_unchecked(&buf[..=pos as usize]) };
+                    unsafe { WideCString::from_vec_with_nul_unchecked(&buf[..=pos as usize]) };
                 if let Ok(p) = WinPathBuf::from(path.as_ucstr()).expand() {
                     match ShellIcon::load(p, idx as u32) {
                         Ok(icon) => Some(icon),
@@ -797,8 +806,8 @@ impl MainWindow {
         let hwnd = self.get_control_handle(Control::HoldModeCombo);
         let idx = unsafe { SendMessageW(hwnd, CB_GETCURSEL, 0, 0) };
         let data = unsafe { SendMessageW(hwnd, CB_GETITEMDATA, idx as WPARAM, 0) };
-        let cs = unsafe { U16CStr::from_ptr_str(data as *const u16) };
-        registry::HoldMode::from_cstr(cs)
+        let cs = unsafe { WideCStr::from_ptr_str(data as *const WCHAR) };
+        registry::HoldMode::from_wcstr(cs)
     }
 
     fn set_selected_hold_mode(&self, mode: registry::HoldMode) -> Option<usize> {
@@ -806,8 +815,8 @@ impl MainWindow {
         let count = unsafe { SendMessageW(hwnd, CB_GETCOUNT, 0, 0) as usize };
         for idx in 0..count {
             let data = unsafe { SendMessageW(hwnd, CB_GETITEMDATA, idx as WPARAM, 0) };
-            let cs = unsafe { U16CStr::from_ptr_str(data as *const u16) };
-            if let Some(m) = registry::HoldMode::from_cstr(cs) {
+            let cs = unsafe { WideCStr::from_ptr_str(data as *const WCHAR) };
+            if let Some(m) = registry::HoldMode::from_wcstr(cs) {
                 if m == mode {
                     unsafe { SendMessageW(hwnd, CB_SETCURSEL, idx as WPARAM, 0) };
                     return Some(idx);
