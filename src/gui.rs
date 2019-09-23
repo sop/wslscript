@@ -572,7 +572,8 @@ impl MainWindow {
     ///
     fn on_save_button_clicked(&mut self) -> Result<LRESULT, Error> {
         if let Some(config) = self.current_ext_cfg.as_ref() {
-            registry::register_extension(config)?
+            registry::register_extension(config)?;
+            self.update_control_states();
         }
         Ok(0)
     }
