@@ -323,13 +323,10 @@ pub fn get_handler_executable_path(ext: &str) -> Result<PathBuf, Error> {
 /// Returns an error if extension is not registered for WSLScript, or some
 /// error occurs.
 pub fn is_registered_for_current_executable(ext: &str) -> Result<bool, Error> {
-    let registered_exe = get_handler_executable_path(ext)?
-        .canonicalize()
-        .map_err(|_| ErrorKind::InvalidPathError)?;
-    let current_exe = std::env::current_exe()
-        .map_err(|_| ErrorKind::InvalidPathError)?
-        .canonicalize()
-        .map_err(|_| ErrorKind::InvalidPathError)?;
+    let registered_exe = get_handler_executable_path(ext)?;
+    let registered_exe = registered_exe.canonicalize().unwrap_or(registered_exe);
+    let current_exe = std::env::current_exe()?;
+    let current_exe = current_exe.canonicalize().unwrap_or(current_exe);
     if current_exe == registered_exe {
         return Ok(true);
     }
