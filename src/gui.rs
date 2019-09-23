@@ -360,10 +360,22 @@ impl MainWindow {
         // set message
         let hwnd = self.get_control_handle(Control::StaticMsg);
         if let Some(mut ext) = self.get_current_extension() {
-            // TODO: check that extension is registered for current executable
-            ext.insert_str(0, ".");
-            unsafe { SetWindowTextW(hwnd, wcstr!(ext).as_ptr()) };
-            Self::set_window_font(hwnd, &self.ext_font);
+            // if extension is registered for WSL, but handler is in another directory
+            if !registry::is_registered_for_current_executable(&ext).unwrap_or(true) {
+                let exe_os = std::env::current_exe().unwrap_or_default();
+                let exe_name = exe_os.file_name().unwrap_or_default().to_string_lossy();
+                let s = wcstr!(format!(
+                    ".{} handler found from another directory!\n\
+                     Did you move {}?",
+                    ext, exe_name
+                ));
+                unsafe { SetWindowTextW(hwnd, s.as_ptr()) };
+                Self::set_window_font(hwnd, &self.caption_font);
+            } else {
+                ext.insert_str(0, ".");
+                unsafe { SetWindowTextW(hwnd, wcstr!(ext).as_ptr()) };
+                Self::set_window_font(hwnd, &self.ext_font);
+            }
         } else {
             let s = wch_c!(
                 "Enter the extension and click \

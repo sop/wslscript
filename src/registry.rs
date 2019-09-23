@@ -1,6 +1,7 @@
 use crate::error::*;
 use crate::icon::ShellIcon;
 use std::ffi::OsString;
+use std::path::PathBuf;
 use wchar::*;
 use widestring::*;
 use winreg::enums::*;
@@ -8,7 +9,7 @@ use winreg::transaction::Transaction;
 use winreg::RegKey;
 
 const HANDLER_PREFIX: &str = "wslscript";
-const CLASSES_SUBKEY: &str = "Software\\Classes";
+const CLASSES_SUBKEY: &str = r"Software\Classes";
 
 #[derive(Clone)]
 pub struct ExtConfig {
@@ -97,8 +98,8 @@ pub fn register_extension(config: &ExtConfig) -> Result<(), Error> {
     let executable = exe_os
         .to_str()
         .ok_or_else(|| ErrorKind::StringToPathUTF8Error)?
-        .trim_start_matches("\\\\?\\");
-    let cmd = format!("\"{}\" -h {} -E \"%0\" %*", executable, hold_mode);
+        .trim_start_matches(r"\\?\");
+    let cmd = format!(r#""{}" -h {} -E "%0" %*"#, executable, hold_mode);
     let icon: Option<OsString> = config
         .icon
         .as_ref()
@@ -111,32 +112,32 @@ pub fn register_extension(config: &ExtConfig) -> Result<(), Error> {
     set_value(&tx, &base, &handler_name, "HoldMode", &hold_mode)?;
     // Software\Classes\wslscript.ext\DefaultIcon
     if let Some(s) = &icon {
-        let path = format!("{}\\DefaultIcon", handler_name);
+        let path = format!(r"{}\DefaultIcon", handler_name);
         set_value(&tx, &base, &path, "", &s.as_os_str())?;
     }
     // Software\Classes\wslscript.ext\shell
-    let path = format!("{}\\shell", handler_name);
+    let path = format!(r"{}\shell", handler_name);
     set_value(&tx, &base, &path, "", &"open")?;
     // Software\Classes\wslscript.ext\shell\open - Open command
-    let path = format!("{}\\shell\\open", handler_name);
+    let path = format!(r"{}\shell\open", handler_name);
     set_value(&tx, &base, &path, "", &"Run in WSL")?;
     if let Some(s) = &icon {
         set_value(&tx, &base, &path, "Icon", &s.as_os_str())?;
     }
     // Software\Classes\wslscript.ext\shell\open\command
-    let path = format!("{}\\shell\\open\\command", handler_name);
+    let path = format!(r"{}\shell\open\command", handler_name);
     set_value(&tx, &base, &path, "", &cmd)?;
     // Software\Classes\wslscript.ext\shell\runas - Run as administrator
-    let path = format!("{}\\shell\\runas", handler_name);
+    let path = format!(r"{}\shell\runas", handler_name);
     set_value(&tx, &base, &path, "Extended", &"")?;
     if let Some(s) = &icon {
         set_value(&tx, &base, &path, "Icon", &s.as_os_str())?;
     }
     // Software\Classes\wslscript.ext\shell\runas\command
-    let path = format!("{}\\shell\\runas\\command", handler_name);
+    let path = format!(r"{}\shell\runas\command", handler_name);
     set_value(&tx, &base, &path, "", &cmd)?;
     // Software\Classes\wslscript.ext\shellex\DropHandler - Drop handler
-    let path = format!("{}\\shellex\\DropHandler", handler_name);
+    let path = format!(r"{}\shellex\DropHandler", handler_name);
     let value = "{86C86720-42A0-1069-A2E8-08002B30309D}";
     set_value(&tx, &base, &path, "", &value)?;
     // Software\Classes\.ext - Register handler for extension
@@ -144,7 +145,7 @@ pub fn register_extension(config: &ExtConfig) -> Result<(), Error> {
     set_value(&tx, &base, &path, "", &handler_name)?;
     set_value(&tx, &base, &path, "PerceivedType", &"application")?;
     // Software\Classes\.ext\OpenWithProgIds - Add extension to open with list
-    let path = &format!(".{}\\OpenWithProgIds", ext);
+    let path = &format!(r".{}\OpenWithProgIds", ext);
     set_value(&tx, &base, &path, &handler_name, &"")?;
     tx.commit().map_err(|e| ErrorKind::RegistryError { e })?;
     Ok(())
@@ -299,14 +300,13 @@ pub fn is_registered_for_other(ext: &str) -> Result<bool, Error> {
     Ok(false)
 }
 
-/*
 pub fn get_handler_executable_path(ext: &str) -> Result<PathBuf, Error> {
     let base = RegKey::predef(HKEY_CURRENT_USER)
         .open_subkey(CLASSES_SUBKEY)
         .map_err(|e| ErrorKind::RegistryError { e })?;
     let handler_name = format!("{}.{}", HANDLER_PREFIX, ext);
     let key = base
-        .open_subkey(format!("{}\\shell\\open\\command", handler_name))
+        .open_subkey(format!(r"{}\shell\open\command", handler_name))
         .map_err(|e| ErrorKind::RegistryError { e })?;
     let cmd = key
         .get_value::<String, _>("")
@@ -318,6 +318,10 @@ pub fn get_handler_executable_path(ext: &str) -> Result<PathBuf, Error> {
     Err(ErrorKind::InvalidPathError)?
 }
 
+/// Whether extension is registered for current wslscript executable.
+///
+/// Returns an error if extension is not registered for WSLScript, or some
+/// error occurs.
 pub fn is_registered_for_current_executable(ext: &str) -> Result<bool, Error> {
     let registered_exe = get_handler_executable_path(ext)?
         .canonicalize()
@@ -331,4 +335,3 @@ pub fn is_registered_for_current_executable(ext: &str) -> Result<bool, Error> {
     }
     Ok(false)
 }
-*/

@@ -46,8 +46,7 @@ pub fn run_wsl(script_path: &PathBuf, args: &[PathBuf], opts: WSLOptions) -> Res
                 bash_cmd.push_slice(wch!(" ||"))
             }
             bash_cmd.push_os_str(OsString::from_wide(wch!(
-                " { printf >&2 '\\n[Process exited - exit code %d] ' \"$?\"; \
-                 read -n 1 -s; }"
+                r#" { printf >&2 '\n[Process exited - exit code %d] ' "$?"; read -n 1 -s; }"#
             )));
         }
     }
@@ -78,7 +77,7 @@ fn single_quote_escape(s: &OsStr) -> OsString {
     for c in s.encode_wide() {
         // escape ' to '\''
         if c == '\'' as u16 {
-            w.extend_from_slice(wch!("'\\''"));
+            w.extend_from_slice(wch!(r"'\''"));
         } else {
             w.push(c);
         }
@@ -93,15 +92,15 @@ fn single_quote_escape(s: &OsStr) -> OsString {
 pub fn paths_to_wsl(paths: &[PathBuf]) -> Result<Vec<PathBuf>, Error> {
     // build a printf command that prints null separated results
     let mut printf_cmd = WideString::new();
-    printf_cmd.push_slice(wch!("printf '%s\\0'"));
+    printf_cmd.push_slice(wch!(r"printf '%s\0'"));
     paths
         .iter()
         .map(|path| {
             // execute wslpath for each argument in subprocess
             let mut s = WideString::new();
-            s.push_slice(wch!(" \"$(wslpath -u '"));
+            s.push_slice(wch!(r#" "$(wslpath -u '"#));
             s.push_os_str(single_quote_escape(path.as_os_str()));
-            s.push_slice(wch!("')\""));
+            s.push_slice(wch!(r#"')""#));
             s
         })
         .for_each(|s| printf_cmd.push(s));
