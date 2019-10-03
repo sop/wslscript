@@ -14,7 +14,7 @@ Copy `wslscript.exe` file to a location of your choice.
 This executable is used to invoke WSL, so don't move the file afterwards.
 
 Run `wslscript.exe` to open a setup GUI.
-Enter the extension and click Register -button to add filetype association
+Enter the extension and click _Register_ button to add filetype association
 into Windows registry.
 
 After registration, `.sh` files can be executed from explorer by double clicking.
