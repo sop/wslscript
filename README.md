@@ -1,4 +1,4 @@
-# WSL Script
+# [WSL Script](https://sop.github.io/wslscript/)
 
 Shell script _(.sh)_ handler for
 [Windows Subsystem for Linux](https://docs.microsoft.com/en-us/windows/wsl/about) _(WSL)_.
