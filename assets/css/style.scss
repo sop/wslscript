@@ -1,4 +1,7 @@
-@import 'jekyll-theme-hacker';
+---
+---
+
+@import "{{ site.theme }}";
 
 h1 a {
     color: inherit;
