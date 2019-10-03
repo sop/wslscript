@@ -1,4 +1,4 @@
 theme: jekyll-theme-hacker
 title: WSL Script
 description: Associate shell script files with Windows Subsystem for Linux.
-show_downloads: true
+release_url: https://github.com/sop/wslscript/releases/latest
