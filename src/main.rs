@@ -2,6 +2,7 @@
 
 #[macro_use]
 extern crate failure;
+extern crate guid_create;
 extern crate shell32;
 extern crate wchar;
 extern crate winapi;

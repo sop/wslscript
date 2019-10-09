@@ -24,14 +24,14 @@ impl ShellIcon {
         let s = path.to_wide();
         let handle = unsafe { ExtractIconW(GetModuleHandleW(null_mut()), s.as_ptr(), index) };
         if handle.is_null() {
-            Err(ErrorKind::WinAPIError {
+            return Err(Error::from(ErrorKind::WinAPIError {
                 s: "No icon found from the file.".to_owned(),
-            })?
+            }));
         }
         if handle == 1 as _ {
-            Err(ErrorKind::WinAPIError {
+            return Err(Error::from(ErrorKind::WinAPIError {
                 s: "File not found.".to_owned(),
-            })?
+            }));
         }
         Ok(Self {
             handle,

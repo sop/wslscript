@@ -1,7 +1,11 @@
 use crate::error::*;
 use crate::icon::ShellIcon;
+use guid_create::GUID;
+use std::collections::HashMap;
 use std::ffi::OsString;
 use std::path::PathBuf;
+use std::pin::Pin;
+use std::str::FromStr;
 use wchar::*;
 use widestring::*;
 use winreg::enums::*;
@@ -10,6 +14,7 @@ use winreg::RegKey;
 
 const HANDLER_PREFIX: &str = "wslscript";
 const CLASSES_SUBKEY: &str = r"Software\Classes";
+const LXSS_SUBKEY: &str = r"Software\Microsoft\Windows\CurrentVersion\Lxss";
 
 #[derive(Clone)]
 pub struct ExtConfig {
@@ -17,6 +22,7 @@ pub struct ExtConfig {
     pub extension: String,
     pub icon: Option<ShellIcon>,
     pub hold_mode: HoldMode,
+    pub distro: Option<DistroGUID>,
 }
 
 #[derive(Clone, Copy, PartialEq)]
@@ -69,6 +75,92 @@ impl Default for HoldMode {
     }
 }
 
+/// GUID of the WSL distribution.
+#[derive(Clone, Eq)]
+pub struct DistroGUID {
+    guid: GUID,
+    /// Pinned wide c-string of the GUID for win32 usage. Enclosed in `{`...`}`.
+    wcs: Pin<WideCString>,
+}
+impl DistroGUID {
+    /// Get reference to the pinned wide c-string of the GUID.
+    pub fn as_wcstr(&self) -> &WideCStr {
+        &self.wcs
+    }
+}
+impl std::ops::Deref for DistroGUID {
+    type Target = GUID;
+    fn deref(&self) -> &Self::Target {
+        &self.guid
+    }
+}
+impl std::fmt::Display for DistroGUID {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let s = self.wcs.to_string().map_err(|_| std::fmt::Error)?;
+        f.write_str(&s)
+    }
+}
+impl FromStr for DistroGUID {
+    type Err = ();
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        let guid = GUID::parse(s.trim_start_matches('{').trim_end_matches('}')).map_err(|_| ())?;
+        let s = format!("{{{}}}", guid.to_string().to_ascii_lowercase());
+        let wcs = unsafe { WideCString::from_str_unchecked(s) };
+        Ok(Self {
+            guid,
+            wcs: Pin::new(wcs),
+        })
+    }
+}
+impl std::cmp::PartialEq for DistroGUID {
+    fn eq(&self, other: &Self) -> bool {
+        self.guid.eq(&other.guid)
+    }
+}
+impl std::hash::Hash for DistroGUID {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.data1().hash(state);
+        self.data2().hash(state);
+        self.data3().hash(state);
+        self.data4().hash(state);
+    }
+}
+
+pub struct Distros {
+    pub list: HashMap<DistroGUID, String>,
+    pub default: Option<DistroGUID>,
+}
+impl Default for Distros {
+    fn default() -> Self {
+        Self {
+            list: HashMap::new(),
+            default: None,
+        }
+    }
+}
+impl Distros {
+    pub fn sorted_pairs(&self) -> Vec<(&DistroGUID, &str)> {
+        let mut pairs = self
+            .list
+            .iter()
+            .map(|(k, v)| (k, v.as_str()))
+            .collect::<Vec<_>>();
+        pairs.sort_by(|&a, &b| {
+            use std::cmp::Ordering::*;
+            if let Some(default) = self.default.as_ref() {
+                if a.0 == default {
+                    return Less;
+                }
+                if b.0 == default {
+                    return Greater;
+                }
+            }
+            a.1.cmp(b.1)
+        });
+        pairs
+    }
+}
+
 /// Registers WSL Script as a handler for given file extension.
 ///
 /// See https://docs.microsoft.com/en-us/windows/win32/shell/fa-file-types
@@ -78,7 +170,7 @@ impl Default for HoldMode {
 pub fn register_extension(config: &ExtConfig) -> Result<(), Error> {
     let ext = config.extension.as_str();
     if ext.is_empty() {
-        Err(ErrorKind::LogicError { s: "No extension." })?;
+        return Err(Error::from(ErrorKind::LogicError { s: "No extension." }));
     }
     let tx = Transaction::new().map_err(|e| ErrorKind::RegistryError { e })?;
     let root = RegKey::predef(HKEY_CURRENT_USER);
@@ -92,6 +184,19 @@ pub fn register_extension(config: &ExtConfig) -> Result<(), Error> {
         key.delete_subkey_all("")
             .map_err(|e| ErrorKind::RegistryError { e })?;
     }
+    // command argument to select distribution
+    let distro_arg = config
+        .distro
+        .as_ref()
+        .ok_or_else(|| std::io::Error::from(std::io::ErrorKind::Other))
+        .and_then(|distro| {
+            RegKey::predef(HKEY_CURRENT_USER)
+                .open_subkey_transacted(LXSS_SUBKEY, &tx)
+                .and_then(|k| k.open_subkey_transacted(distro.to_string(), &tx))
+        })
+        .and_then(|k| k.get_value::<String, _>("DistributionName"))
+        .map(|name| format!(r#" -d "{}""#, name))
+        .unwrap_or_default();
     let hold_mode = config.hold_mode.as_string();
     let exe_os = std::env::current_exe()?.canonicalize()?;
     // shell handler doesn't recognize UNC format
@@ -99,7 +204,10 @@ pub fn register_extension(config: &ExtConfig) -> Result<(), Error> {
         .to_str()
         .ok_or_else(|| ErrorKind::StringToPathUTF8Error)?
         .trim_start_matches(r"\\?\");
-    let cmd = format!(r#""{}" -h {} -E "%0" %*"#, executable, hold_mode);
+    let cmd = format!(
+        r#""{}"{} -h {} -E "%0" %*"#,
+        executable, distro_arg, hold_mode
+    );
     let icon: Option<OsString> = config
         .icon
         .as_ref()
@@ -110,6 +218,15 @@ pub fn register_extension(config: &ExtConfig) -> Result<(), Error> {
     set_value(&tx, &base, &handler_name, "EditFlags", &0x30u32)?;
     set_value(&tx, &base, &handler_name, "FriendlyTypeName", &handler_desc)?;
     set_value(&tx, &base, &handler_name, "HoldMode", &hold_mode)?;
+    if let Some(distro) = &config.distro {
+        set_value(
+            &tx,
+            &base,
+            &handler_name,
+            "Distribution",
+            &distro.to_string(),
+        )?;
+    }
     // Software\Classes\wslscript.ext\DefaultIcon
     if let Some(s) = &icon {
         let path = format!(r"{}\DefaultIcon", handler_name);
@@ -248,6 +365,30 @@ pub fn query_registered_extensions() -> Result<Vec<String>, Error> {
     Ok(extensions)
 }
 
+/// Query installed WSL distributions.
+pub fn query_distros() -> Result<Distros, Error> {
+    let base = RegKey::predef(HKEY_CURRENT_USER)
+        .open_subkey(LXSS_SUBKEY)
+        .map_err(|e| ErrorKind::RegistryError { e })?;
+    let mut distros = Distros::default();
+    base.enum_keys().filter_map(Result::ok).for_each(|s| {
+        if let Ok(name) = base
+            .open_subkey(&s)
+            .and_then(|k| k.get_value::<String, _>("DistributionName"))
+        {
+            if let Ok(guid) = DistroGUID::from_str(&s) {
+                distros.list.insert(guid, name);
+            }
+        }
+    });
+    if let Ok(s) = base.get_value::<String, _>("DefaultDistribution") {
+        if let Ok(guid) = DistroGUID::from_str(&s) {
+            distros.default = Some(guid);
+        }
+    }
+    Ok(distros)
+}
+
 pub fn get_extension_config(ext: &str) -> Result<ExtConfig, Error> {
     let handler_key = RegKey::predef(HKEY_CURRENT_USER)
         .open_subkey(CLASSES_SUBKEY)
@@ -265,10 +406,15 @@ pub fn get_extension_config(ext: &str) -> Result<ExtConfig, Error> {
         .ok()
         .and_then(|s| HoldMode::from_str(&s))
         .unwrap_or_default();
+    let distro = handler_key
+        .get_value::<String, _>("Distribution")
+        .ok()
+        .and_then(|s| DistroGUID::from_str(&s).ok());
     Ok(ExtConfig {
         extension: ext.to_owned(),
         icon,
         hold_mode,
+        distro,
     })
 }
 
@@ -315,7 +461,7 @@ pub fn get_handler_executable_path(ext: &str) -> Result<PathBuf, Error> {
     if let Some(exe) = cmd.trim_start_matches('"').split_terminator('"').next() {
         return Ok(PathBuf::from(exe));
     }
-    Err(ErrorKind::InvalidPathError)?
+    Err(Error::from(ErrorKind::InvalidPathError))
 }
 
 /// Whether extension is registered for current wslscript executable.

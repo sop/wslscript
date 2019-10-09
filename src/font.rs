@@ -31,7 +31,7 @@ impl Font {
                 )
             }
         {
-            Err(last_error())?
+            return Err(last_error());
         }
         let mut lf: LOGFONTW = metrics.lfCaptionFont;
         if size > 0 {
@@ -39,7 +39,7 @@ impl Font {
         }
         let font = unsafe { CreateFontIndirectW(&lf) };
         if font.is_null() {
-            Err(last_error())?
+            return Err(last_error());
         }
         Ok(Self { handle: font })
     }

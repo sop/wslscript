@@ -52,9 +52,11 @@ pub fn run_wsl(script_path: &PathBuf, args: &[PathBuf], opts: WSLOptions) -> Res
     }
     // build command to start WSL process
     let mut cmd = process::Command::new(cmd_bin_path().as_os_str());
+    cmd.args(&[OsStr::new("/C"), wsl_bin_path()?.as_os_str()]);
+    if let Some(distro) = opts.distribution {
+        cmd.args(&[OsStr::new("-d"), &distro]);
+    }
     cmd.args(&[
-        OsStr::new("/C"),
-        wsl_bin_path()?.as_os_str(),
         OsStr::new("-e"),
         OsStr::new("bash"),
         OsStr::new("-c"),
@@ -114,7 +116,7 @@ pub fn paths_to_wsl(paths: &[PathBuf]) -> Result<Vec<PathBuf>, Error> {
     ]);
     let output = cmd.output().context(ErrorKind::WinToUnixPathError)?;
     if !output.status.success() {
-        Err(ErrorKind::WinToUnixPathError)?
+        return Err(Error::from(ErrorKind::WinToUnixPathError));
     }
     Ok(std::str::from_utf8(&output.stdout)
         .context(ErrorKind::StringToPathUTF8Error)?
@@ -160,12 +162,16 @@ fn wsl_bin_path() -> Result<PathBuf, Error> {
 
 /// Options for WSL invocation
 pub struct WSLOptions {
+    /// mode after command exits
     hold_mode: HoldMode,
+    /// WSL distribution to invoke
+    distribution: Option<OsString>,
 }
 
 impl WSLOptions {
     pub fn from_args(args: Vec<OsString>) -> Self {
         let mut hold_mode = HoldMode::default();
+        let mut distribution = None;
         let mut iter = args.iter();
         while let Some(arg) = iter.next() {
             if arg == "-h" {
@@ -176,9 +182,14 @@ impl WSLOptions {
                 {
                     hold_mode = mode;
                 }
+            } else if arg == "-d" {
+                distribution = iter.next().map(|s| s.to_os_string());
             }
         }
-        Self { hold_mode }
+        Self {
+            hold_mode,
+            distribution,
+        }
     }
 }
 
@@ -186,6 +197,7 @@ impl Default for WSLOptions {
     fn default() -> Self {
         Self {
             hold_mode: HoldMode::default(),
+            distribution: None,
         }
     }
 }

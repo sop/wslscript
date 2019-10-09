@@ -41,10 +41,6 @@ pub struct Error {
 }
 
 impl Error {
-    pub fn to_string(&self) -> String {
-        format!("{}", self)
-    }
-
     pub fn to_wide(&self) -> WideCString {
         wcstr!(self.to_string())
     }
