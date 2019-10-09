@@ -23,7 +23,8 @@ use winapi::um::wingdi::*;
 use winapi::um::winuser::*;
 
 extern "system" {
-    /// PickIconDlg() prototype
+    /// PickIconDlg() prototype.
+    /// 
     /// https://docs.microsoft.com/en-us/windows/win32/api/shlobj_core/nf-shlobj_core-pickicondlg
     pub fn PickIconDlg(
         hwnd: HWND,
@@ -33,8 +34,11 @@ extern "system" {
     ) -> std::os::raw::c_int;
 }
 
+/// Start WSL Script GUI app.
+///
 pub fn start_gui() -> Result<(), Error> {
-    let wnd = MainWindow::new(wch_c!("WSL Script"))?;
+    let title = unsafe { WideCStr::from_slice_with_nul_unchecked(wch_c!("WSL Script")) };
+    let wnd = MainWindow::new(title)?;
     wnd.run()
 }
 
@@ -84,22 +88,24 @@ extern "system" fn window_proc_wrapper<T: WindowProc>(
 }
 
 struct MainWindow {
-    window: HWND,
+    hwnd: HWND,
     caption_font: Font,
     ext_font: Font,
-    current_ext_idx: isize,
+    /// Currently selected extension index in the listview.
+    current_ext_idx: Option<usize>,
+    /// Configuration of the currently selected extension.
     current_ext_cfg: Option<registry::ExtConfig>,
-    // list of available WSL distributions
+    /// List of available WSL distributions.
     distros: registry::Distros,
     lv_extensions: ExtensionsListView,
 }
 impl Default for MainWindow {
     fn default() -> Self {
         Self {
-            window: null_mut(),
+            hwnd: null_mut(),
             caption_font: Default::default(),
             ext_font: Default::default(),
-            current_ext_idx: -1,
+            current_ext_idx: None,
             current_ext_cfg: None,
             distros: registry::query_distros().unwrap_or_else(|_| registry::Distros::default()),
             lv_extensions: Default::default(),
@@ -129,12 +135,13 @@ enum MenuItem {
     EditExtension,
 }
 
+/// Minimum and initial main window size.
 const MIN_WINDOW_SIZE: (i32, i32) = (300, 315);
 
 impl MainWindow {
     /// Create application window.
     ///
-    fn new(title: &[WCHAR]) -> Result<Pin<Box<Self>>, Error> {
+    fn new(title: &WideCStr) -> Result<Pin<Box<Self>>, Error> {
         let wnd = Pin::new(Box::new(Self::default()));
         let instance = unsafe { GetModuleHandleW(null_mut()) };
         let class_name = wch_c!("WSLScript");
@@ -177,16 +184,15 @@ impl MainWindow {
                     unsafe { DispatchMessageW(&msg) };
                 }
                 std::i32::MIN..=-1 => return Err(last_error()),
-                0 => break,
+                0 => return Ok(()),
             }
         }
-        Ok(())
     }
 
     /// Create window controls.
     ///
     fn create_window_controls(&mut self) -> Result<(), Error> {
-        let instance = unsafe { GetWindowLongW(self.window, GWL_HINSTANCE) as HINSTANCE };
+        let instance = unsafe { GetWindowLongW(self.hwnd, GWL_HINSTANCE) as HINSTANCE };
         self.caption_font = Font::new_default_caption()?;
         self.ext_font = Font::new_caption(24)?;
         // init common controls
@@ -201,7 +207,7 @@ impl MainWindow {
         let hwnd = unsafe { CreateWindowExW(
             0, wch_c!("STATIC").as_ptr(), null_mut(),
             SS_CENTER | WS_CHILD | WS_VISIBLE,
-            0, 0, 0, 0, self.window,
+            0, 0, 0, 0, self.hwnd,
             Control::StaticMsg.to_u16().unwrap() as HMENU, instance, null_mut(),
         ) };
         set_window_font(hwnd, &self.caption_font);
@@ -211,7 +217,7 @@ impl MainWindow {
         let hwnd = unsafe { CreateWindowExW(
             0, wch_c!("BUTTON").as_ptr(), wch_c!("Register").as_ptr(),
             WS_TABSTOP | WS_VISIBLE | WS_CHILD | BS_DEFPUSHBUTTON,
-            0, 0, 0, 0, self.window,
+            0, 0, 0, 0, self.hwnd,
             Control::BtnRegister.to_u16().unwrap() as HMENU, instance, null_mut()
         ) };
         set_window_font(hwnd, &self.caption_font);
@@ -221,7 +227,7 @@ impl MainWindow {
         let hwnd = unsafe { CreateWindowExW(
             0, wch_c!("STATIC").as_ptr(), wch_c!("Extension:").as_ptr(),
             SS_CENTERIMAGE | SS_RIGHT | WS_CHILD | WS_VISIBLE,
-            0, 0, 0, 0, self.window,
+            0, 0, 0, 0, self.hwnd,
             Control::RegisterLabel.to_u16().unwrap() as HMENU, instance, null_mut(),
         ) };
         set_window_font(hwnd, &self.caption_font);
@@ -231,15 +237,16 @@ impl MainWindow {
         let hwnd = unsafe { CreateWindowExW(
             WS_EX_CLIENTEDGE, wch_c!("EDIT").as_ptr(), null_mut(),
             ES_LEFT | ES_LOWERCASE | WS_CHILD | WS_VISIBLE | WS_BORDER,
-            0, 0, 0, 0, self.window,
+            0, 0, 0, 0, self.hwnd,
             Control::EditExtension.to_u16().unwrap() as HMENU, instance, null_mut(),
         ) };
         set_window_font(hwnd, &self.caption_font);
         let self_ptr = self as *const _;
+        // use custom window proc
         unsafe { SetWindowSubclass(hwnd, Some(extension_input_proc), 0, self_ptr as DWORD_PTR) };
         // if no extensions are registered, set default value to input box
         if registry::query_registered_extensions()
-            .unwrap_or_else(|_| vec![])
+            .unwrap_or_default()
             .is_empty()
         {
             unsafe { SetWindowTextW(hwnd, wch_c!("sh").as_ptr()) };
@@ -252,7 +259,7 @@ impl MainWindow {
         unsafe { CreateWindowExW(
             0, wch_c!("STATIC").as_ptr(), null_mut(),
             SS_ICON | SS_CENTERIMAGE | SS_NOTIFY | WS_CHILD | WS_VISIBLE,
-            0, 0, 0, 0, self.window,
+            0, 0, 0, 0, self.hwnd,
             Control::StaticIcon.to_u16().unwrap() as HMENU, instance, null_mut(),
         ) };
 
@@ -261,7 +268,7 @@ impl MainWindow {
         let hwnd = unsafe { CreateWindowExW(
             0, wch_c!("STATIC").as_ptr(), wch_c!("Icon").as_ptr(),
             SS_CENTER | WS_CHILD | WS_VISIBLE,
-            0, 0, 0, 0, self.window,
+            0, 0, 0, 0, self.hwnd,
             Control::IconLabel.to_u16().unwrap() as HMENU, instance, null_mut()
         ) };
         set_window_font(hwnd, &self.caption_font);
@@ -271,7 +278,7 @@ impl MainWindow {
         let hwnd = unsafe { CreateWindowExW(
             0, wch_c!("COMBOBOX").as_ptr(), null_mut(),
             CBS_DROPDOWNLIST | WS_VSCROLL | WS_CHILD | WS_VISIBLE,
-            0, 0, 0, 0, self.window,
+            0, 0, 0, 0, self.hwnd,
             Control::HoldModeCombo.to_u16().unwrap() as HMENU, instance, null_mut()
         ) };
         set_window_font(hwnd, &self.caption_font);
@@ -305,7 +312,7 @@ impl MainWindow {
         let hwnd = unsafe { CreateWindowExW(
             0, wch_c!("STATIC").as_ptr(), wch_c!("Exit behaviour").as_ptr(),
             SS_CENTER | WS_CHILD | WS_VISIBLE,
-            0, 0, 0, 0, self.window,
+            0, 0, 0, 0, self.hwnd,
             Control::HoldModeLabel.to_u16().unwrap() as HMENU, instance, null_mut()
         ) };
         set_window_font(hwnd, &self.caption_font);
@@ -315,7 +322,7 @@ impl MainWindow {
         let hwnd = unsafe { CreateWindowExW(
             0, wch_c!("COMBOBOX").as_ptr(), null_mut(),
             CBS_DROPDOWNLIST | WS_VSCROLL | WS_CHILD | WS_VISIBLE,
-            0, 0, 0, 0, self.window,
+            0, 0, 0, 0, self.hwnd,
             Control::DistroCombo.to_u16().unwrap() as HMENU, instance, null_mut()
         ) };
         set_window_font(hwnd, &self.caption_font);
@@ -350,7 +357,7 @@ impl MainWindow {
         let hwnd = unsafe { CreateWindowExW(
             0, wch_c!("STATIC").as_ptr(), wch_c!("Distribution").as_ptr(),
             SS_CENTER | WS_CHILD | WS_VISIBLE,
-            0, 0, 0, 0, self.window,
+            0, 0, 0, 0, self.hwnd,
             Control::DistroLabel.to_u16().unwrap() as HMENU, instance, null_mut()
         ) };
         set_window_font(hwnd, &self.caption_font);
@@ -360,7 +367,7 @@ impl MainWindow {
         let hwnd = unsafe { CreateWindowExW(
             0, wch_c!("BUTTON").as_ptr(), wch_c!("Save").as_ptr(),
             WS_TABSTOP | WS_VISIBLE | WS_CHILD | BS_DEFPUSHBUTTON,
-            0, 0, 0, 0, self.window,
+            0, 0, 0, 0, self.hwnd,
             Control::BtnSave.to_u16().unwrap() as HMENU, instance, null_mut()
         ) };
         set_window_font(hwnd, &self.caption_font);
@@ -376,12 +383,15 @@ impl MainWindow {
         if let Some(mut ext) = self.get_current_extension() {
             // if extension is registered for WSL, but handler is in another directory
             if !registry::is_registered_for_current_executable(&ext).unwrap_or(true) {
-                let exe_os = std::env::current_exe().unwrap_or_default();
-                let exe_name = exe_os.file_name().unwrap_or_default().to_string_lossy();
+                let exe = std::env::current_exe()
+                    .ok()
+                    .and_then(|p| p.file_name().map(|s| s.to_os_string()))
+                    .and_then(|s| s.into_string().ok())
+                    .unwrap_or_default();
                 let s = wcstr!(format!(
                     ".{} handler found from another directory!\n\
                      Did you move {}?",
-                    ext, exe_name
+                    ext, exe
                 ));
                 unsafe { SetWindowTextW(hwnd, s.as_ptr()) };
                 set_window_font(hwnd, &self.caption_font);
@@ -446,42 +456,24 @@ impl MainWindow {
     /// * `width` - Window width
     /// * `height` - Window height
     fn on_resize(&self, width: i32, _height: i32) {
-        // static message
-        let hwnd = self.get_control_handle(Control::StaticMsg);
-        unsafe { MoveWindow(hwnd, 10, 10, width - 20, 40, win::TRUE) };
-        // register label
-        let hwnd = self.get_control_handle(Control::RegisterLabel);
-        unsafe { MoveWindow(hwnd, 10, 50, 60, 25, win::TRUE) };
-        // register input
-        let hwnd = self.get_control_handle(Control::EditExtension);
-        unsafe { MoveWindow(hwnd, 80, 50, width - 90 - 100, 25, win::TRUE) };
-        // register button
-        let hwnd = self.get_control_handle(Control::BtnRegister);
-        unsafe { MoveWindow(hwnd, width - 100, 50, 90, 25, win::TRUE) };
-        // extensions listview
-        let hwnd = self.get_control_handle(Control::ListViewExtensions);
-        unsafe { MoveWindow(hwnd, 10, 85, width - 20, 75, win::TRUE) };
-        // hold mode label
-        let hwnd = self.get_control_handle(Control::HoldModeLabel);
-        unsafe { MoveWindow(hwnd, 10, 170, 130, 20, win::TRUE) };
-        // hold mode combo box
-        let hwnd = self.get_control_handle(Control::HoldModeCombo);
-        unsafe { MoveWindow(hwnd, 10, 190, 130, 100, win::TRUE) };
-        // distro label
-        let hwnd = self.get_control_handle(Control::DistroLabel);
-        unsafe { MoveWindow(hwnd, 10, 220, 130, 20, win::TRUE) };
-        // distro combo box
-        let hwnd = self.get_control_handle(Control::DistroCombo);
-        unsafe { MoveWindow(hwnd, 10, 240, 130, 100, win::TRUE) };
-        // icon label
-        let hwnd = self.get_control_handle(Control::IconLabel);
-        unsafe { MoveWindow(hwnd, 150, 170, 32, 16, win::TRUE) };
-        // static icon
-        let hwnd = self.get_control_handle(Control::StaticIcon);
-        unsafe { MoveWindow(hwnd, 150, 186, 32, 32, win::TRUE) };
-        // save button
-        let hwnd = self.get_control_handle(Control::BtnSave);
-        unsafe { MoveWindow(hwnd, width - 90, 188, 80, 25, win::TRUE) };
+        self.move_control(Control::StaticMsg, 10, 10, width - 20, 40);
+        self.move_control(Control::RegisterLabel, 10, 50, 60, 25);
+        self.move_control(Control::EditExtension, 80, 50, width - 90 - 100, 25);
+        self.move_control(Control::BtnRegister, width - 100, 50, 90, 25);
+        self.move_control(Control::ListViewExtensions, 10, 85, width - 20, 75);
+        self.move_control(Control::HoldModeLabel, 10, 170, 130, 20);
+        self.move_control(Control::HoldModeCombo, 10, 190, 130, 100);
+        self.move_control(Control::DistroLabel, 10, 220, 130, 20);
+        self.move_control(Control::DistroCombo, 10, 240, 130, 100);
+        self.move_control(Control::IconLabel, 150, 170, 32, 16);
+        self.move_control(Control::StaticIcon, 150, 186, 32, 32);
+        self.move_control(Control::BtnSave, width - 90, 188, 80, 25);
+    }
+
+    /// Move window control.
+    fn move_control(&self, control: Control, x: i32, y: i32, width: i32, height: i32) {
+        let hwnd = self.get_control_handle(control);
+        unsafe { MoveWindow(hwnd, x, y, width, height, win::TRUE) };
     }
 
     /// Handle WM_COMMAND message from a control.
@@ -558,7 +550,7 @@ impl MainWindow {
             ));
             let result = unsafe {
                 MessageBoxW(
-                    self.window,
+                    self.hwnd,
                     s.as_ptr(),
                     wch_c!("Confirm extension registration.").as_ptr(),
                     MB_YESNO | MB_ICONQUESTION | MB_DEFBUTTON2,
@@ -579,7 +571,7 @@ impl MainWindow {
         // clear extension input
         unsafe {
             SetDlgItemTextW(
-                self.window,
+                self.hwnd,
                 Control::EditExtension.to_i32().unwrap(),
                 wch_c!("").as_ptr(),
             )
@@ -593,11 +585,7 @@ impl MainWindow {
             }
             None
         });
-        let i = match idx {
-            Some(i) => i as isize,
-            None => -1,
-        };
-        self.set_current_extension(i);
+        self.set_current_extension(idx);
         self.update_control_states();
         Ok(0)
     }
@@ -608,9 +596,10 @@ impl MainWindow {
         if let Some(config) = self.current_ext_cfg.as_ref() {
             registry::register_extension(config)?;
             self.update_control_states();
-            let name = self.get_distro_label(config.distro.as_ref());
-            self.lv_extensions
-                .set_subitem_text(self.current_ext_idx as usize, 1, &wcstr!(name));
+            if let Some(item) = self.current_ext_idx {
+                let name = self.get_distro_label(config.distro.as_ref());
+                self.lv_extensions.set_subitem_text(item, 1, &wcstr!(name));
+            }
         }
         Ok(0)
     }
@@ -632,19 +621,19 @@ impl MainWindow {
                 }
                 let hwnd = self.get_control_handle(Control::ListViewExtensions);
                 unsafe { SendMessageW(hwnd, LVM_DELETEITEM, idx, 0) };
-                self.set_current_extension(-1);
+                self.set_current_extension(None);
                 self.update_control_states();
             }
             MenuItem::EditExtension => {
                 let idx: usize = self.get_menu_data(hmenu);
-                self.set_current_extension(idx as isize);
+                self.set_current_extension(Some(idx));
                 self.update_control_states();
             }
         }
         0
     }
 
-    /// Get application-defined value associated with a menu
+    /// Get application-defined value associated with a menu.
     ///
     fn get_menu_data<T>(&self, hmenu: HMENU) -> T
     where
@@ -681,7 +670,7 @@ impl MainWindow {
                     if nmia.iItem < 0 {
                         return 0;
                     }
-                    self.set_current_extension(nmia.iItem as isize);
+                    self.set_current_extension(Some(nmia.iItem as usize));
                     self.update_control_states();
                 }
                 // when listview item is right-clicked
@@ -713,7 +702,7 @@ impl MainWindow {
                     unsafe { InsertMenuItemW(hmenu, 1, win::TRUE, &mii) };
                     let mut pos: POINT = nmia.ptAction;
                     unsafe { ClientToScreen(hwnd, &mut pos) };
-                    unsafe { TrackPopupMenuEx(hmenu, 0, pos.x, pos.y, self.window, null_mut()) };
+                    unsafe { TrackPopupMenuEx(hmenu, 0, pos.x, pos.y, self.hwnd, null_mut()) };
                 }
                 _ => {}
             },
@@ -725,17 +714,14 @@ impl MainWindow {
     /// Get currently selected extension.
     ///
     fn get_current_extension(&self) -> Option<String> {
-        if self.current_ext_idx == -1 {
-            return None;
-        }
-        self.lv_extensions
-            .get_item_text(self.current_ext_idx as usize)
+        self.current_ext_idx
+            .and_then(|item| self.lv_extensions.get_item_text(item))
     }
 
     /// Get window handle to control.
     ///
     fn get_control_handle(&self, control: Control) -> HWND {
-        unsafe { GetDlgItem(self.window, control.to_i32().unwrap()) }
+        unsafe { GetDlgItem(self.hwnd, control.to_i32().unwrap()) }
     }
 
     /// Get text from extension text input.
@@ -744,7 +730,7 @@ impl MainWindow {
         let mut buf: Vec<WCHAR> = Vec::with_capacity(32);
         unsafe {
             let len = GetDlgItemTextW(
-                self.window,
+                self.hwnd,
                 Control::EditExtension.to_i32().unwrap(),
                 buf.as_mut_ptr(),
                 buf.capacity() as i32,
@@ -756,8 +742,8 @@ impl MainWindow {
 
     /// Set extension that is currently selected for edit.
     ///
-    fn set_current_extension(&mut self, listview_idx: isize) {
-        self.current_ext_idx = listview_idx;
+    fn set_current_extension(&mut self, item: Option<usize>) {
+        self.current_ext_idx = item;
         self.current_ext_cfg = self
             .get_current_extension()
             .and_then(|ext| registry::get_extension_config(&ext).ok());
@@ -780,14 +766,12 @@ impl MainWindow {
             }
             let s = path.to_wide();
             if s.len() < buf.len() {
-                for (i, &c) in s.as_slice().iter().enumerate() {
-                    buf[i] = c;
-                }
+                unsafe { std::ptr::copy_nonoverlapping(s.as_ptr(), buf.as_mut_ptr(), s.len()) };
                 idx = si.index() as i32;
             }
         }
         let result =
-            unsafe { PickIconDlg(self.window, buf.as_mut_ptr(), buf.len() as u32, &mut idx) };
+            unsafe { PickIconDlg(self.hwnd, buf.as_mut_ptr(), buf.len() as u32, &mut idx) };
         if result == 0 {
             return None;
         }
@@ -894,7 +878,7 @@ impl ExtensionsListView {
             LVS_EX_FULLROWSELECT | LVS_EX_GRIDLINES,
             wcstr!(WC_LISTVIEW).as_ptr(), null_mut(),
             WS_CHILD | WS_VISIBLE | WS_BORDER | LVS_REPORT | LVS_SINGLESEL | LVS_SHOWSELALWAYS,
-            0, 0, 0, 0, main.window,
+            0, 0, 0, 0, main.hwnd,
             Control::ListViewExtensions.to_u16().unwrap() as HMENU,
             GetModuleHandleW(null_mut()), null_mut(),
         ) };
@@ -1026,7 +1010,7 @@ impl WindowProc for MainWindow {
         match msg {
             WM_NCCREATE => {
                 // store main window handle
-                self.window = hwnd;
+                self.hwnd = hwnd;
                 // WM_NCCREATE must be passed to DefWindowProc
                 None
             }
@@ -1124,7 +1108,19 @@ extern "system" fn extension_input_proc(
             VK_RETURN => {
                 return 0;
             }
-            _ => {}
+            _ => {
+                if let Some(ch) = std::char::from_u32(wparam as u32) {
+                    match ch {
+                        // illegal filename characters
+                        '<' | '>' | ':' | '"' | '/' | '\\' | '|' | '?' | '*' => return 0,
+                        // space
+                        ' ' => return 0,
+                        // no periods in extension
+                        '.' => return 0,
+                        _ => {}
+                    }
+                }
+            }
         },
         _ => {}
     }

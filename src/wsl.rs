@@ -160,11 +160,11 @@ fn wsl_bin_path() -> Result<PathBuf, Error> {
     Err(Error::from(ErrorKind::WSLNotFound))
 }
 
-/// Options for WSL invocation
+/// Options for WSL invocation.
 pub struct WSLOptions {
-    /// mode after command exits
+    /// mode after command exits.
     hold_mode: HoldMode,
-    /// WSL distribution to invoke
+    /// WSL distribution to invoke.
     distribution: Option<OsString>,
 }
 

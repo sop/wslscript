@@ -37,7 +37,7 @@ impl HoldMode {
     const WCSTR_ALWAYS: &'static [WideChar] = wch_c!("always");
     const WCSTR_ERROR: &'static [WideChar] = wch_c!("error");
 
-    /// Create from nul terminated wide string
+    /// Create from nul terminated wide string.
     pub fn from_wcstr(s: &WideCStr) -> Option<Self> {
         match s.as_slice_with_nul() {
             Self::WCSTR_NEVER => Some(Self::Never),
@@ -47,14 +47,14 @@ impl HoldMode {
         }
     }
 
-    /// Create from &str
+    /// Create from &str.
     pub fn from_str(s: &str) -> Option<Self> {
         WideCString::from_str(s)
             .ok()
             .and_then(|s| Self::from_wcstr(&s))
     }
 
-    /// Get mode string as a nul terminated wide string
+    /// Get mode string as a nul terminated wide string.
     pub fn as_wcstr(self) -> &'static WideCStr {
         match self {
             Self::Never => unsafe { WideCStr::from_slice_with_nul_unchecked(Self::WCSTR_NEVER) },
@@ -63,7 +63,7 @@ impl HoldMode {
         }
     }
 
-    /// Get mode as a utf-8 string
+    /// Get mode as a utf-8 string.
     pub fn as_string(self) -> String {
         self.as_wcstr().to_string_lossy()
     }
