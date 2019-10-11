@@ -1,4 +1,4 @@
-use crate::wcstr;
+use crate::wcstring;
 use std::fmt::{self, Display};
 use widestring::*;
 
@@ -42,7 +42,7 @@ pub struct Error {
 
 impl Error {
     pub fn to_wide(&self) -> WideCString {
-        wcstr!(self.to_string())
+        wcstring!(self.to_string())
     }
 }
 

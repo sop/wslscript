@@ -9,7 +9,8 @@ use winapi::shared::minwindef::*;
 use winapi::um::winnt::*;
 
 #[macro_export]
-macro_rules! wcstr {
+/// WideCString from &str
+macro_rules! wcstring {
     ($x:expr) => {
         WideCString::from_str($x).unwrap_or_else(|e| {
             let p = e.nul_position();
@@ -20,27 +21,42 @@ macro_rules! wcstr {
     };
 }
 
+#[macro_export]
+/// WideCStr from static string literal
+macro_rules! wcstr {
+    ($x:expr) => {
+        // wch_c always inserts nul, so we can safely unwrap
+        WideCStr::from_slice_with_nul(wchar::wch_c!($x)).unwrap()
+    };
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     #[test]
-    fn test_wcstr_with_null() {
-        assert_eq!(wcstr!("with\0null"), wcstr!("with"));
+    fn test_wcstring_with_null() {
+        assert_eq!(wcstring!("with\0null"), wcstring!("with"));
+    }
+    #[test]
+    fn test_wcstr() {
+        assert_eq!(wcstr!("test").as_slice(), &wch_c!("test")[0..4]);
     }
 }
 
+/// Display error message as a message box.
 pub fn error_message(msg: &WideCStr) {
     use winapi::um::winuser::{MessageBoxW, MB_ICONERROR, MB_OK};
     unsafe {
         MessageBoxW(
             null_mut(),
             msg.as_ptr(),
-            wch_c!("Error").as_ptr(),
+            wcstr!("Error").as_ptr(),
             MB_OK | MB_ICONERROR,
         );
     }
 }
 
+/// Get the last WinAPI error.
 pub fn last_error() -> Error {
     use winapi::um::winbase::*;
     let mut buf: LPWSTR = null_mut();
@@ -68,17 +84,50 @@ pub fn last_error() -> Error {
     Error::from(ErrorKind::WinAPIError { s })
 }
 
+/// Path buffer with Windows semantics.
 #[derive(Clone)]
 pub struct WinPathBuf {
     buf: PathBuf,
 }
 
 impl WinPathBuf {
+    pub fn new(buf: PathBuf) -> Self {
+        Self { buf }
+    }
+
+    /// Get path as a nul terminated wide string.
     pub fn to_wide(&self) -> WideCString {
         unsafe { WideCString::from_os_str_unchecked(self.buf.as_os_str()) }
     }
 
-    pub fn expand(&self) -> Result<WinPathBuf, Error> {
+    /// Canonicalize path.
+    pub fn canonicalize(&self) -> Result<Self, Error> {
+        Ok(Self::new(self.buf.canonicalize().map_err(Error::from)?))
+    }
+
+    /// Remove extended length path prefix (`\\?\`).
+    pub fn without_extended(&self) -> Self {
+        use std::ffi::OsString;
+        use std::os::windows::ffi::*;
+        let words = self.buf.as_os_str().encode_wide().collect::<Vec<_>>();
+        let mut s = words.as_slice();
+        if s.starts_with(wch!(r"\\?\")) {
+            s = &s[4..];
+        }
+        Self::new(PathBuf::from(OsString::from_wide(s)))
+    }
+
+    /// Get the path as a doubly quoted wide string.
+    pub fn quoted(&self) -> WideString {
+        let mut ws = WideString::new();
+        ws.push_slice(wch!(r#"""#));
+        ws.push_os_str(self.buf.as_os_str());
+        ws.push_slice(wch!(r#"""#));
+        ws
+    }
+
+    /// Expand environment variables in a path.
+    pub fn expand(&self) -> Result<Self, Error> {
         let mut buf = [0 as WCHAR; 2048];
         let len = unsafe {
             winapi::um::processenv::ExpandEnvironmentStringsW(

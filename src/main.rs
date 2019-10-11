@@ -20,7 +20,7 @@ use error::*;
 use std::env;
 use std::ffi::OsString;
 use std::path::PathBuf;
-use wchar::*;
+use widestring::*;
 
 fn main() {
     if let Err(e) = run_app() {
@@ -29,7 +29,7 @@ fn main() {
             MessageBoxW(
                 std::ptr::null_mut(),
                 e.to_wide().as_ptr(),
-                wch_c!("Error").as_ptr(),
+                wcstr!("Error").as_ptr(),
                 MB_OK | MB_ICONERROR | MB_SERVICE_NOTIFICATION,
             );
         }

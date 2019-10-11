@@ -138,20 +138,20 @@ fn cmd_bin_path() -> PathBuf {
     }
     // try %SYSTEMROOT\System32\cmd.exe
     if let Some(mut p) = env::var_os("SYSTEMROOT").map(PathBuf::from) {
-        p.push(r#"System32\cmd.exe"#);
+        p.push(r"System32\cmd.exe");
         if p.is_file() {
             return p;
         }
     }
     // hardcoded fallback
-    PathBuf::from(r#"C:\Windows\System32\cmd.exe"#)
+    PathBuf::from(r"C:\Windows\System32\cmd.exe")
 }
 
 /// Returns the path to WSL executable.
 fn wsl_bin_path() -> Result<PathBuf, Error> {
     // try %SYSTEMROOT\System32\wsl.exe
     if let Some(mut p) = env::var_os("SYSTEMROOT").map(PathBuf::from) {
-        p.push(r#"System32\wsl.exe"#);
+        p.push(r"System32\wsl.exe");
         if p.is_file() {
             return Ok(p);
         }

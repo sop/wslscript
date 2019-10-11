@@ -25,12 +25,12 @@ impl ShellIcon {
         let handle = unsafe { ExtractIconW(GetModuleHandleW(null_mut()), s.as_ptr(), index) };
         if handle.is_null() {
             return Err(Error::from(ErrorKind::WinAPIError {
-                s: "No icon found from the file.".to_owned(),
+                s: String::from("No icon found from the file."),
             }));
         }
         if handle == 1 as _ {
             return Err(Error::from(ErrorKind::WinAPIError {
-                s: "File not found.".to_owned(),
+                s: String::from("File not found."),
             }));
         }
         Ok(Self {
@@ -49,7 +49,7 @@ impl ShellIcon {
             .encode_wide()
             .collect();
         // remove UNC prefix
-        let ws = if &s[0..4] == wch!(r#"\\?\"#) {
+        let ws = if &s[0..4] == wch!(r"\\?\") {
             WideStr::from_slice(&s[4..])
         } else {
             WideStr::from_slice(&s)

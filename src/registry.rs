@@ -1,5 +1,6 @@
 use crate::error::*;
 use crate::icon::ShellIcon;
+use crate::win32::*;
 use guid_create::GUID;
 use std::collections::HashMap;
 use std::ffi::OsString;
@@ -25,6 +26,7 @@ pub struct ExtConfig {
     pub distro: Option<DistroGUID>,
 }
 
+/// Terminal window hold mode after script exits.
 #[derive(Clone, Copy, PartialEq)]
 pub enum HoldMode {
     Never,  // always close terminal window on exit
@@ -82,28 +84,32 @@ pub struct DistroGUID {
     /// Pinned wide c-string of the GUID for win32 usage. Enclosed in `{`...`}`.
     wcs: Pin<WideCString>,
 }
+
 impl DistroGUID {
     /// Get reference to the pinned wide c-string of the GUID.
     pub fn as_wcstr(&self) -> &WideCStr {
         &self.wcs
     }
 }
+
 impl std::ops::Deref for DistroGUID {
     type Target = GUID;
     fn deref(&self) -> &Self::Target {
         &self.guid
     }
 }
+
 impl std::fmt::Display for DistroGUID {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let s = self.wcs.to_string().map_err(|_| std::fmt::Error)?;
         f.write_str(&s)
     }
 }
+
 impl FromStr for DistroGUID {
-    type Err = ();
+    type Err = guid_create::ParseError;
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        let guid = GUID::parse(s.trim_start_matches('{').trim_end_matches('}')).map_err(|_| ())?;
+        let guid = GUID::parse(s.trim_start_matches('{').trim_end_matches('}'))?;
         let s = format!("{{{}}}", guid.to_string().to_ascii_lowercase());
         let wcs = unsafe { WideCString::from_str_unchecked(s) };
         Ok(Self {
@@ -112,11 +118,13 @@ impl FromStr for DistroGUID {
         })
     }
 }
+
 impl std::cmp::PartialEq for DistroGUID {
     fn eq(&self, other: &Self) -> bool {
         self.guid.eq(&other.guid)
     }
 }
+
 impl std::hash::Hash for DistroGUID {
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
         self.data1().hash(state);
@@ -126,10 +134,12 @@ impl std::hash::Hash for DistroGUID {
     }
 }
 
+/// List of available WSL distributions mapped from GUID to name.
 pub struct Distros {
     pub list: HashMap<DistroGUID, String>,
     pub default: Option<DistroGUID>,
 }
+
 impl Default for Distros {
     fn default() -> Self {
         Self {
@@ -138,7 +148,9 @@ impl Default for Distros {
         }
     }
 }
+
 impl Distros {
+    /// Get a list of _(GUID, name)_ pairs sorted for GUI listing.
     pub fn sorted_pairs(&self) -> Vec<(&DistroGUID, &str)> {
         let mut pairs = self
             .list
@@ -173,119 +185,132 @@ pub fn register_extension(config: &ExtConfig) -> Result<(), Error> {
         return Err(Error::from(ErrorKind::LogicError { s: "No extension." }));
     }
     let tx = Transaction::new().map_err(|e| ErrorKind::RegistryError { e })?;
-    let root = RegKey::predef(HKEY_CURRENT_USER);
-    let base = root
+    let base = RegKey::predef(HKEY_CURRENT_USER)
         .open_subkey_transacted_with_flags(CLASSES_SUBKEY, &tx, KEY_ALL_ACCESS)
         .map_err(|e| ErrorKind::RegistryError { e })?;
-    let handler_name = format!("{}.{}", HANDLER_PREFIX, ext);
+    let name = format!("{}.{}", HANDLER_PREFIX, ext);
     // delete previous handler key in a transaction
     // see https://docs.microsoft.com/en-us/windows/win32/api/winreg/nf-winreg-regdeletekeytransactedw#remarks
-    if let Ok(key) = base.open_subkey_transacted_with_flags(&handler_name, &tx, KEY_ALL_ACCESS) {
+    if let Ok(key) = base.open_subkey_transacted_with_flags(&name, &tx, KEY_ALL_ACCESS) {
         key.delete_subkey_all("")
             .map_err(|e| ErrorKind::RegistryError { e })?;
     }
-    // command argument to select distribution
-    let distro_arg = config
-        .distro
-        .as_ref()
-        .ok_or_else(|| std::io::Error::from(std::io::ErrorKind::Other))
-        .and_then(|distro| {
-            RegKey::predef(HKEY_CURRENT_USER)
-                .open_subkey_transacted(LXSS_SUBKEY, &tx)
-                .and_then(|k| k.open_subkey_transacted(distro.to_string(), &tx))
-        })
-        .and_then(|k| k.get_value::<String, _>("DistributionName"))
-        .map(|name| format!(r#" -d "{}""#, name))
-        .unwrap_or_default();
-    let hold_mode = config.hold_mode.as_string();
-    let exe_os = std::env::current_exe()?.canonicalize()?;
-    // shell handler doesn't recognize UNC format
-    let executable = exe_os
-        .to_str()
-        .ok_or_else(|| ErrorKind::StringToPathUTF8Error)?
-        .trim_start_matches(r"\\?\");
-    let cmd = format!(
-        r#""{}"{} -h {} -E "%0" %*"#,
-        executable, distro_arg, hold_mode
-    );
+    let cmd = get_command(config, &tx)?.to_os_string();
     let icon: Option<OsString> = config
         .icon
         .as_ref()
         .and_then(|icon| Some(icon.shell_path().to_os_string()));
     let handler_desc = format!("WSL Shell Script (.{})", ext);
+    let hold_mode = config.hold_mode.as_string();
     // Software\Classes\wslscript.ext
-    set_value(&tx, &base, &handler_name, "", &handler_desc)?;
-    set_value(&tx, &base, &handler_name, "EditFlags", &0x30u32)?;
-    set_value(&tx, &base, &handler_name, "FriendlyTypeName", &handler_desc)?;
-    set_value(&tx, &base, &handler_name, "HoldMode", &hold_mode)?;
+    set_value(&tx, &base, &name, "", &handler_desc)?;
+    set_value(&tx, &base, &name, "EditFlags", &0x30u32)?;
+    set_value(&tx, &base, &name, "FriendlyTypeName", &handler_desc)?;
+    set_value(&tx, &base, &name, "HoldMode", &hold_mode)?;
     if let Some(distro) = &config.distro {
-        set_value(
-            &tx,
-            &base,
-            &handler_name,
-            "Distribution",
-            &distro.to_string(),
-        )?;
+        set_value(&tx, &base, &name, "Distribution", &distro.to_string())?;
     }
     // Software\Classes\wslscript.ext\DefaultIcon
     if let Some(s) = &icon {
-        let path = format!(r"{}\DefaultIcon", handler_name);
+        let path = format!(r"{}\DefaultIcon", name);
         set_value(&tx, &base, &path, "", &s.as_os_str())?;
     }
     // Software\Classes\wslscript.ext\shell
-    let path = format!(r"{}\shell", handler_name);
+    let path = format!(r"{}\shell", name);
     set_value(&tx, &base, &path, "", &"open")?;
     // Software\Classes\wslscript.ext\shell\open - Open command
-    let path = format!(r"{}\shell\open", handler_name);
+    let path = format!(r"{}\shell\open", name);
     set_value(&tx, &base, &path, "", &"Run in WSL")?;
     if let Some(s) = &icon {
         set_value(&tx, &base, &path, "Icon", &s.as_os_str())?;
     }
     // Software\Classes\wslscript.ext\shell\open\command
-    let path = format!(r"{}\shell\open\command", handler_name);
-    set_value(&tx, &base, &path, "", &cmd)?;
+    let path = format!(r"{}\shell\open\command", name);
+    set_value(&tx, &base, &path, "", &cmd.as_os_str())?;
     // Software\Classes\wslscript.ext\shell\runas - Run as administrator
-    let path = format!(r"{}\shell\runas", handler_name);
+    let path = format!(r"{}\shell\runas", name);
     set_value(&tx, &base, &path, "Extended", &"")?;
     if let Some(s) = &icon {
         set_value(&tx, &base, &path, "Icon", &s.as_os_str())?;
     }
     // Software\Classes\wslscript.ext\shell\runas\command
-    let path = format!(r"{}\shell\runas\command", handler_name);
-    set_value(&tx, &base, &path, "", &cmd)?;
+    let path = format!(r"{}\shell\runas\command", name);
+    set_value(&tx, &base, &path, "", &cmd.as_os_str())?;
     // Software\Classes\wslscript.ext\shellex\DropHandler - Drop handler
-    let path = format!(r"{}\shellex\DropHandler", handler_name);
+    let path = format!(r"{}\shellex\DropHandler", name);
     let value = "{86C86720-42A0-1069-A2E8-08002B30309D}";
     set_value(&tx, &base, &path, "", &value)?;
     // Software\Classes\.ext - Register handler for extension
     let path = &format!(".{}", ext);
-    set_value(&tx, &base, &path, "", &handler_name)?;
+    set_value(&tx, &base, &path, "", &name)?;
     set_value(&tx, &base, &path, "PerceivedType", &"application")?;
     // Software\Classes\.ext\OpenWithProgIds - Add extension to open with list
     let path = &format!(r".{}\OpenWithProgIds", ext);
-    set_value(&tx, &base, &path, &handler_name, &"")?;
+    set_value(&tx, &base, &path, &name, &"")?;
     tx.commit().map_err(|e| ErrorKind::RegistryError { e })?;
     Ok(())
 }
 
+/// Get the wslscript command for filetype registry.
+fn get_command(config: &ExtConfig, tx: &Transaction) -> Result<WideString, Error> {
+    let exe = WinPathBuf::new(std::env::current_exe()?)
+        .canonicalize()?
+        .without_extended();
+    let mut cmd = WideString::new();
+    cmd.push(exe.quoted());
+    if let Some(distro) = config
+        .distro
+        .as_ref()
+        .and_then(|distro| {
+            RegKey::predef(HKEY_CURRENT_USER)
+                .open_subkey_transacted(LXSS_SUBKEY, &tx)
+                .and_then(|k| k.open_subkey_transacted(distro.to_string(), &tx))
+                .ok()
+        })
+        .and_then(|k| k.get_value::<String, _>("DistributionName").ok())
+    {
+        cmd.push_slice(wch!(r#" -d ""#));
+        cmd.push_str(distro);
+        cmd.push_slice(wch!(r#"""#));
+    }
+    cmd.push_slice(wch!(" -h "));
+    cmd.push(config.hold_mode.as_wcstr().to_ustring());
+    cmd.push_slice(wch!(r#" -E "%0" %*"#));
+    Ok(cmd)
+}
+
+/// Set registry value.
+fn set_value<T: winreg::types::ToRegValue>(
+    tx: &Transaction,
+    base: &RegKey,
+    path: &str,
+    name: &str,
+    value: &T,
+) -> Result<(), Error> {
+    base.create_subkey_transacted(path, &tx)
+        .and_then(|(key, _)| key.set_value(name, value))
+        .map_err(|e| Error::from(ErrorKind::RegistryError { e }))
+}
+
+/// Unregister extension.
 pub fn unregister_extension(ext: &str) -> Result<(), Error> {
     let tx = Transaction::new().map_err(|e| ErrorKind::RegistryError { e })?;
     let base = RegKey::predef(HKEY_CURRENT_USER)
         .open_subkey_transacted_with_flags(CLASSES_SUBKEY, &tx, KEY_ALL_ACCESS)
         .map_err(|e| ErrorKind::RegistryError { e })?;
-    let handler_name = format!("{}.{}", HANDLER_PREFIX, ext);
+    let name = format!("{}.{}", HANDLER_PREFIX, ext);
     // delete handler
-    if let Ok(key) = base.open_subkey_transacted_with_flags(&handler_name, &tx, KEY_ALL_ACCESS) {
+    if let Ok(key) = base.open_subkey_transacted_with_flags(&name, &tx, KEY_ALL_ACCESS) {
         key.delete_subkey_all("")
             .map_err(|e| ErrorKind::RegistryError { e })?;
-        base.delete_subkey_transacted(&handler_name, &tx)
+        base.delete_subkey_transacted(&name, &tx)
             .map_err(|e| ErrorKind::RegistryError { e })?;
     }
     let ext_name = format!(".{}", ext);
     if let Ok(ext_key) = base.open_subkey_transacted_with_flags(&ext_name, &tx, KEY_ALL_ACCESS) {
         // if extension has handler as a default
         if let Ok(val) = ext_key.get_value::<String, _>("") {
-            if val == handler_name {
+            if val == name {
                 // set default handler to unset
                 ext_key
                     .delete_value("")
@@ -298,11 +323,10 @@ pub fn unregister_extension(ext: &str) -> Result<(), Error> {
             ext_key.open_subkey_transacted_with_flags(open_with_name, &tx, KEY_ALL_ACCESS)
         {
             // remove handler
-            if let Some(progid) = open_with_key.enum_values().find_map(|item| {
-                item.ok()
-                    .filter(|(name, _)| *name == handler_name)
-                    .map(|(name, _)| name)
-            }) {
+            if let Some(progid) = open_with_key
+                .enum_values()
+                .find_map(|item| item.ok().filter(|(k, _)| *k == name).map(|(k, _)| k))
+            {
                 open_with_key
                     .delete_value(progid)
                     .map_err(|e| ErrorKind::RegistryError { e })?;
@@ -332,21 +356,9 @@ pub fn unregister_extension(ext: &str) -> Result<(), Error> {
     Ok(())
 }
 
-fn set_value<T: winreg::types::ToRegValue>(
-    tx: &Transaction,
-    base: &RegKey,
-    path: &str,
-    name: &str,
-    value: &T,
-) -> Result<(), Error> {
-    let key = base
-        .create_subkey_transacted(path, &tx)
-        .map_err(|e| ErrorKind::RegistryError { e })?
-        .0;
-    key.set_value(name, value)
-        .map_err(|e| Error::from(ErrorKind::RegistryError { e }))
-}
-
+/// Query list of registered extensions.
+///
+/// Extensions don't have a leading dot.
 pub fn query_registered_extensions() -> Result<Vec<String>, Error> {
     let base = RegKey::predef(HKEY_CURRENT_USER)
         .open_subkey(CLASSES_SUBKEY)
@@ -389,11 +401,11 @@ pub fn query_distros() -> Result<Distros, Error> {
     Ok(distros)
 }
 
+/// Get configuration for given registered extension.
 pub fn get_extension_config(ext: &str) -> Result<ExtConfig, Error> {
     let handler_key = RegKey::predef(HKEY_CURRENT_USER)
         .open_subkey(CLASSES_SUBKEY)
-        .map_err(|e| ErrorKind::RegistryError { e })?
-        .open_subkey(format!("{}.{}", HANDLER_PREFIX, ext))
+        .and_then(|key| key.open_subkey(format!("{}.{}", HANDLER_PREFIX, ext)))
         .map_err(|e| ErrorKind::RegistryError { e })?;
     let mut icon: Option<ShellIcon> = None;
     if let Ok(key) = handler_key.open_subkey("DefaultIcon") {
@@ -418,50 +430,47 @@ pub fn get_extension_config(ext: &str) -> Result<ExtConfig, Error> {
     })
 }
 
+/// Check whether extension is registered for WSL Script.
 pub fn is_extension_registered_for_wsl(ext: &str) -> Result<bool, Error> {
-    let base = RegKey::predef(HKEY_CURRENT_USER)
+    RegKey::predef(HKEY_CURRENT_USER)
         .open_subkey(CLASSES_SUBKEY)
-        .map_err(|e| ErrorKind::RegistryError { e })?;
-    if let Ok(key) = base.open_subkey(format!(".{}", ext)) {
-        if let Ok(handler) = key.get_value::<String, _>("") {
-            if handler == format!("{}.{}", HANDLER_PREFIX, ext) {
-                return Ok(true);
-            }
-        }
-    }
-    Ok(false)
+        .map_err(|e| ErrorKind::RegistryError { e })?
+        // try to open .ext key
+        .open_subkey(format!(".{}", ext))
+        .and_then(|key| key.get_value::<String, _>(""))
+        .map(|val| val == format!("{}.{}", HANDLER_PREFIX, ext))
+        // if .ext registry key didn't exist
+        .or_else(|_| Ok(false))
 }
 
+/// Check whether extension is associated with other than WSL Script.
 pub fn is_registered_for_other(ext: &str) -> Result<bool, Error> {
-    let base = RegKey::predef(HKEY_CURRENT_USER)
+    RegKey::predef(HKEY_CURRENT_USER)
         .open_subkey(CLASSES_SUBKEY)
-        .map_err(|e| ErrorKind::RegistryError { e })?;
-    if let Ok(key) = base.open_subkey(format!(".{}", ext)) {
-        if let Ok(handler) = key.get_value::<String, _>("") {
-            if handler != format!("{}.{}", HANDLER_PREFIX, ext) {
-                return Ok(true);
-            }
-        }
-    }
-    Ok(false)
+        .map_err(|e| ErrorKind::RegistryError { e })?
+        // try to open .ext key
+        .open_subkey(format!(".{}", ext))
+        .and_then(|key| key.get_value::<String, _>(""))
+        .map(|val| val != format!("{}.{}", HANDLER_PREFIX, ext))
+        // if .ext registry key didn't exist
+        .or_else(|_| Ok(false))
 }
 
+/// Get executable path of the WSL Script handler.
 pub fn get_handler_executable_path(ext: &str) -> Result<PathBuf, Error> {
-    let base = RegKey::predef(HKEY_CURRENT_USER)
+    RegKey::predef(HKEY_CURRENT_USER)
         .open_subkey(CLASSES_SUBKEY)
-        .map_err(|e| ErrorKind::RegistryError { e })?;
-    let handler_name = format!("{}.{}", HANDLER_PREFIX, ext);
-    let key = base
-        .open_subkey(format!(r"{}\shell\open\command", handler_name))
-        .map_err(|e| ErrorKind::RegistryError { e })?;
-    let cmd = key
-        .get_value::<String, _>("")
-        .map_err(|e| ErrorKind::RegistryError { e })?;
-    // remove quotes
-    if let Some(exe) = cmd.trim_start_matches('"').split_terminator('"').next() {
-        return Ok(PathBuf::from(exe));
-    }
-    Err(Error::from(ErrorKind::InvalidPathError))
+        .and_then(|key| key.open_subkey(format!(r"{}.{}\shell\open\command", HANDLER_PREFIX, ext)))
+        .and_then(|key| key.get_value::<String, _>(""))
+        .map_err(|e| Error::from(ErrorKind::RegistryError { e }))
+        .and_then(|cmd| {
+            // remove quotes
+            cmd.trim_start_matches('"')
+                .split_terminator('"')
+                .next()
+                .map(PathBuf::from)
+                .ok_or_else(|| Error::from(ErrorKind::InvalidPathError))
+        })
 }
 
 /// Whether extension is registered for current wslscript executable.
