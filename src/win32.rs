@@ -75,7 +75,7 @@ pub fn last_error() -> Error {
         )
     };
     let s: String = if res == 0 {
-        format!("Error code {}", errno).to_string()
+        format!("Error code {}", errno)
     } else {
         let s = unsafe { WideCString::from_ptr_str(buf).to_string_lossy() };
         unsafe { LocalFree(buf as _) };

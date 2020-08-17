@@ -199,7 +199,7 @@ pub fn register_extension(config: &ExtConfig) -> Result<(), Error> {
     let icon: Option<OsString> = config
         .icon
         .as_ref()
-        .and_then(|icon| Some(icon.shell_path().to_os_string()));
+        .map(|icon| icon.shell_path().to_os_string());
     let handler_desc = format!("WSL Shell Script (.{})", ext);
     let hold_mode = config.hold_mode.as_string();
     // Software\Classes\wslscript.ext

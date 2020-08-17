@@ -406,11 +406,7 @@ impl MainWindow {
         unsafe { ShowWindow(self.get_control_handle(Control::HoldModeLabel), visibility) };
         // hold mode combo
         unsafe { ShowWindow(self.get_control_handle(Control::HoldModeCombo), visibility) };
-        if let Some(mode) = self
-            .current_ext_cfg
-            .as_ref()
-            .and_then(|cfg| Some(cfg.hold_mode))
-        {
+        if let Some(mode) = self.current_ext_cfg.as_ref().map(|cfg| cfg.hold_mode) {
             self.set_selected_hold_mode(mode);
         }
         // distro label
@@ -897,11 +893,10 @@ impl ExtensionsListView {
         col.cx = 130;
         unsafe { SendMessageW(hwnd, LVM_INSERTCOLUMNW, 1, &col as *const _ as LPARAM) };
         // insert items
-        match registry::query_registered_extensions().and_then(|exts| {
-            Ok(exts
-                .iter()
+        match registry::query_registered_extensions().map(|exts| {
+            exts.iter()
                 .filter_map(|ext| registry::get_extension_config(ext).ok())
-                .collect::<Vec<_>>())
+                .collect::<Vec<_>>()
         }) {
             Ok(configs) => {
                 for (i, cfg) in configs.iter().enumerate() {
