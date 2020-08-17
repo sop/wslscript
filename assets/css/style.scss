@@ -8,3 +8,12 @@ h1 a {
     text-shadow: none;
     text-decoration: none;
 }
+
+header h1::before {
+    content: none;
+}
+
+h1 img {
+    vertical-align: text-bottom;
+    margin-right: 8px;
+}
