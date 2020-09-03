@@ -9,9 +9,11 @@ fn compile_resources() {
     let project_dir = PathBuf::from(env::var("CARGO_MANIFEST_DIR").unwrap());
     let mut icon = project_dir;
     icon.push("assets/icon/terminal.ico");
-    let mut res = winres::WindowsResource::new();
-    res.set_icon_with_id(icon.to_str().unwrap(), "app")
+    winres::WindowsResource::new()
+        .set_manifest_file("assets/manifest.xml")
+        .set_icon_with_id(icon.to_str().unwrap(), "app")
         .set("InternalName", "wslscript.exe")
-        .set("LegalCopyright", "Joni Eskelinen © 2019");
-    res.compile().unwrap();
+        .set("LegalCopyright", "Joni Eskelinen © 2019")
+        .compile()
+        .unwrap();
 }

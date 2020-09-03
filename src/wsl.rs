@@ -56,12 +56,11 @@ pub fn run_wsl(script_path: &PathBuf, args: &[PathBuf], opts: WSLOptions) -> Res
     if let Some(distro) = opts.distribution {
         cmd.args(&[OsStr::new("-d"), &distro]);
     }
-    cmd.args(&[
-        OsStr::new("-e"),
-        OsStr::new("bash"),
-        OsStr::new("-c"),
-        &bash_cmd.to_os_string(),
-    ]);
+    cmd.args(&[OsStr::new("-e"), OsStr::new("bash")]);
+    if opts.interactive {
+        cmd.args(&[OsStr::new("-i")]);
+    }
+    cmd.args(&[OsStr::new("-c"), &bash_cmd.to_os_string()]);
     // start as a detached process in a new process group so we can safely
     // exit this program and have the script execute on it's own
     cmd.creation_flags(winbase::DETACHED_PROCESS | winbase::CREATE_NEW_PROCESS_GROUP);
@@ -164,6 +163,8 @@ fn wsl_bin_path() -> Result<PathBuf, Error> {
 pub struct WSLOptions {
     /// mode after command exits.
     hold_mode: HoldMode,
+    /// Whether to run bash as an interactive shell.
+    interactive: bool,
     /// WSL distribution to invoke.
     distribution: Option<OsString>,
 }
@@ -171,6 +172,7 @@ pub struct WSLOptions {
 impl WSLOptions {
     pub fn from_args(args: Vec<OsString>) -> Self {
         let mut hold_mode = HoldMode::default();
+        let mut interactive = false;
         let mut distribution = None;
         let mut iter = args.iter();
         while let Some(arg) = iter.next() {
@@ -182,12 +184,15 @@ impl WSLOptions {
                 {
                     hold_mode = mode;
                 }
+            } else if arg == "-i" {
+                interactive = true;
             } else if arg == "-d" {
                 distribution = iter.next().map(|s| s.to_os_string());
             }
         }
         Self {
             hold_mode,
+            interactive,
             distribution,
         }
     }
@@ -197,6 +202,7 @@ impl Default for WSLOptions {
     fn default() -> Self {
         Self {
             hold_mode: HoldMode::default(),
+            interactive: false,
             distribution: None,
         }
     }

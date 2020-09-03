@@ -113,18 +113,20 @@ impl Default for MainWindow {
 
 #[derive(FromPrimitive, ToPrimitive, PartialEq)]
 enum Control {
-    StaticMsg = 100,    // message area
-    RegisterLabel,      // label for extension input
-    EditExtension,      // input for extension
-    BtnRegister,        // register button
-    ListViewExtensions, // listview of registered extensions
-    StaticIcon,         // icon for extension
-    IconLabel,          // label for icon
-    HoldModeCombo,      // combo box for hold mode
-    HoldModeLabel,      // label for hold mode
-    DistroCombo,        // combo box for distro
-    DistroLabel,        // label for distro
-    BtnSave,            // Save button
+    StaticMsg = 100,     // message area
+    RegisterLabel,       // label for extension input
+    EditExtension,       // input for extension
+    BtnRegister,         // register button
+    ListViewExtensions,  // listview of registered extensions
+    StaticIcon,          // icon for extension
+    IconLabel,           // label for icon
+    HoldModeCombo,       // combo box for hold mode
+    HoldModeLabel,       // label for hold mode
+    InteractiveCheckbox, // label for interactive shell checkbox
+    InteractiveLabel,    // checkbox for interactive shell
+    DistroCombo,         // combo box for distro
+    DistroLabel,         // label for distro
+    BtnSave,             // Save button
 }
 
 #[derive(FromPrimitive, ToPrimitive, PartialEq)]
@@ -306,6 +308,34 @@ impl MainWindow {
         ) };
         set_window_font(hwnd, &self.caption_font);
 
+        // interactive shell checkbox
+        #[rustfmt::skip]
+        unsafe { CreateWindowExW(
+            0, wcstr!("BUTTON").as_ptr(), null_mut(),
+            WS_TABSTOP | WS_VISIBLE | WS_CHILD | BS_AUTOCHECKBOX,
+            0, 0, 0, 0, self.hwnd,
+            Control::InteractiveCheckbox.to_u16().unwrap() as HMENU, instance, null_mut()
+        ) };
+
+        // interactive shell label
+        #[rustfmt::skip]
+        let hwnd = unsafe { CreateWindowExW(
+            0, wcstr!("STATIC").as_ptr(), wcstr!("Interactive").as_ptr(),
+            SS_LEFT | SS_CENTERIMAGE | SS_NOTIFY | WS_CHILD | WS_VISIBLE,
+            0, 0, 0, 0, self.hwnd,
+            Control::InteractiveLabel.to_u16().unwrap() as HMENU, instance, null_mut()
+        ) };
+        set_window_font(hwnd, &self.caption_font);
+
+        // tooltip for interactive shell
+        self.create_control_tooltip(
+            Control::InteractiveCheckbox,
+            wcstr!(
+                "Whether to run bash as an interactive shell, \
+                thus executing profile scripts (eg. ~/.bashrc)."
+            ),
+        );
+
         // distro combo box
         #[rustfmt::skip]
         let hwnd = unsafe { CreateWindowExW(
@@ -364,6 +394,27 @@ impl MainWindow {
         Ok(())
     }
 
+    fn create_control_tooltip(&self, control: Control, text: &WideCStr) {
+        let instance = unsafe { GetWindowLongW(self.hwnd, GWL_HINSTANCE) as HINSTANCE };
+        #[rustfmt::skip]
+        let hwnd_tt = unsafe { CreateWindowExW(
+            0, wcstr!("tooltips_class32").as_ptr(), null_mut(),
+            WS_POPUP | TTS_ALWAYSTIP | TTS_BALLOON,
+            CW_USEDEFAULT, CW_USEDEFAULT, CW_USEDEFAULT, CW_USEDEFAULT, self.hwnd,
+            null_mut(), instance, null_mut()
+        ) };
+        let ti = TOOLINFOW {
+            cbSize: size_of::<TOOLINFOW>() as u32,
+            hwnd: self.hwnd,
+            uFlags: TTF_IDISHWND | TTF_SUBCLASS,
+            uId: self.get_control_handle(control) as UINT_PTR,
+            lpszText: text.as_ptr() as LPWSTR,
+            ..unsafe { zeroed() }
+        };
+        unsafe { SendMessageW(hwnd_tt, TTM_ADDTOOLW, 0, &ti as *const _ as LPARAM) };
+        unsafe { SendMessageW(hwnd_tt, TTM_ACTIVATE, win::TRUE as WPARAM, 0) };
+    }
+
     /// Update control states.
     ///
     fn update_control_states(&self) {
@@ -409,6 +460,24 @@ impl MainWindow {
         if let Some(mode) = self.current_ext_cfg.as_ref().map(|cfg| cfg.hold_mode) {
             self.set_selected_hold_mode(mode);
         }
+        // interactive shell label
+        unsafe {
+            ShowWindow(
+                self.get_control_handle(Control::InteractiveLabel),
+                visibility,
+            )
+        };
+        // interactive shell checkbox
+        unsafe {
+            ShowWindow(
+                self.get_control_handle(Control::InteractiveCheckbox),
+                visibility,
+            )
+        };
+        // set button state
+        if let Some(state) = self.current_ext_cfg.as_ref().map(|cfg| cfg.interactive) {
+            self.set_interactive_state(state);
+        }
         // distro label
         unsafe { ShowWindow(self.get_control_handle(Control::DistroLabel), visibility) };
         // distro combo
@@ -448,11 +517,13 @@ impl MainWindow {
         self.move_control(Control::ListViewExtensions, 10, 85, width - 20, 75);
         self.move_control(Control::HoldModeLabel, 10, 170, 130, 20);
         self.move_control(Control::HoldModeCombo, 10, 190, 130, 100);
+        self.move_control(Control::InteractiveLabel, 170, 190, 130, 20);
+        self.move_control(Control::InteractiveCheckbox, 150, 190, 20, 20);
         self.move_control(Control::DistroLabel, 10, 220, 130, 20);
         self.move_control(Control::DistroCombo, 10, 240, 130, 100);
-        self.move_control(Control::IconLabel, 150, 170, 32, 16);
-        self.move_control(Control::StaticIcon, 150, 186, 32, 32);
-        self.move_control(Control::BtnSave, width - 90, 188, 80, 25);
+        self.move_control(Control::IconLabel, 150, 220, 32, 16);
+        self.move_control(Control::StaticIcon, 150, 236, 32, 32);
+        self.move_control(Control::BtnSave, width - 90, 240, 80, 25);
     }
 
     /// Move window control.
@@ -485,6 +556,26 @@ impl MainWindow {
                             cfg.hold_mode = mode;
                         }
                     }
+                }
+                _ => {}
+            },
+            Control::InteractiveCheckbox => match code {
+                BN_CLICKED => {
+                    let state = self.get_interactive_state();
+                    if let Some(cfg) = &mut self.current_ext_cfg {
+                        cfg.interactive = state;
+                    }
+                }
+                _ => {}
+            },
+            Control::InteractiveLabel => match code {
+                // when interactive shell label is clicked
+                STN_CLICKED => {
+                    let state = !self.get_interactive_state();
+                    if let Some(cfg) = &mut self.current_ext_cfg {
+                        cfg.interactive = state;
+                    }
+                    self.set_interactive_state(state);
                 }
                 _ => {}
             },
@@ -550,6 +641,7 @@ impl MainWindow {
             extension: ext.clone(),
             icon: Some(icon),
             hold_mode: registry::HoldMode::Error,
+            interactive: false,
             distro: None,
         };
         registry::register_extension(&config)?;
@@ -805,6 +897,17 @@ impl MainWindow {
             }
         }
         None
+    }
+
+    /// Get the interactive shell checkbox state.
+    fn get_interactive_state(&self) -> bool {
+        let result = unsafe { IsDlgButtonChecked(self.hwnd, Control::InteractiveCheckbox as i32) };
+        result == 1
+    }
+
+    /// Set the interactive shell checkbox state.
+    fn set_interactive_state(&self, state: bool) {
+        unsafe { CheckDlgButton(self.hwnd, Control::InteractiveCheckbox as i32, state as u32) };
     }
 
     /// Set selected distro in combo box.

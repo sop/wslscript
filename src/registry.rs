@@ -23,6 +23,7 @@ pub struct ExtConfig {
     pub extension: String,
     pub icon: Option<ShellIcon>,
     pub hold_mode: HoldMode,
+    pub interactive: bool,
     pub distro: Option<DistroGUID>,
 }
 
@@ -202,11 +203,13 @@ pub fn register_extension(config: &ExtConfig) -> Result<(), Error> {
         .map(|icon| icon.shell_path().to_os_string());
     let handler_desc = format!("WSL Shell Script (.{})", ext);
     let hold_mode = config.hold_mode.as_string();
+    let interactive = config.interactive as u32;
     // Software\Classes\wslscript.ext
     set_value(&tx, &base, &name, "", &handler_desc)?;
     set_value(&tx, &base, &name, "EditFlags", &0x30u32)?;
     set_value(&tx, &base, &name, "FriendlyTypeName", &handler_desc)?;
     set_value(&tx, &base, &name, "HoldMode", &hold_mode)?;
+    set_value(&tx, &base, &name, "Interactive", &interactive)?;
     if let Some(distro) = &config.distro {
         set_value(&tx, &base, &name, "Distribution", &distro.to_string())?;
     }
@@ -275,6 +278,9 @@ fn get_command(config: &ExtConfig, tx: &Transaction) -> Result<WideString, Error
     }
     cmd.push_slice(wch!(" -h "));
     cmd.push(config.hold_mode.as_wcstr().to_ustring());
+    if config.interactive {
+        cmd.push_slice(wch!(" -i "));
+    }
     cmd.push_slice(wch!(r#" -E "%0" %*"#));
     Ok(cmd)
 }
@@ -422,10 +428,16 @@ pub fn get_extension_config(ext: &str) -> Result<ExtConfig, Error> {
         .get_value::<String, _>("Distribution")
         .ok()
         .and_then(|s| DistroGUID::from_str(&s).ok());
+    let interactive = handler_key
+        .get_value::<u32, _>("Interactive")
+        .ok()
+        .map(|v| v != 0)
+        .unwrap_or(false);
     Ok(ExtConfig {
         extension: ext.to_owned(),
         icon,
         hold_mode,
+        interactive,
         distro,
     })
 }
