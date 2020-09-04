@@ -86,8 +86,11 @@ extern "system" fn window_proc_wrapper<T: WindowProc>(
 }
 
 struct MainWindow {
+    /// Main window handle.
     hwnd: HWND,
+    /// Font for captions.
     caption_font: Font,
+    /// Font for filetype extension.
     ext_font: Font,
     /// Currently selected extension index in the listview.
     current_ext_idx: Option<usize>,
@@ -95,7 +98,10 @@ struct MainWindow {
     current_ext_cfg: Option<registry::ExtConfig>,
     /// List of available WSL distributions.
     distros: registry::Distros,
+    /// Extensions listview.
     lv_extensions: ExtensionsListView,
+    /// Message to display on GUI.
+    message: Option<String>,
 }
 impl Default for MainWindow {
     fn default() -> Self {
@@ -107,10 +113,12 @@ impl Default for MainWindow {
             current_ext_cfg: None,
             distros: registry::query_distros().unwrap_or_else(|_| registry::Distros::default()),
             lv_extensions: Default::default(),
+            message: None,
         }
     }
 }
 
+/// Window control ID's.
 #[derive(FromPrimitive, ToPrimitive, PartialEq)]
 enum Control {
     StaticMsg = 100,     // message area
@@ -235,7 +243,7 @@ impl MainWindow {
         // extension input
         #[rustfmt::skip]
         let hwnd = unsafe { CreateWindowExW(
-            WS_EX_CLIENTEDGE, wcstr!("EDIT").as_ptr(), null_mut(),
+            0, wcstr!("EDIT").as_ptr(), null_mut(),
             ES_LEFT | ES_LOWERCASE | WS_CHILD | WS_VISIBLE | WS_BORDER,
             0, 0, 0, 0, self.hwnd,
             Control::EditExtension.to_u16().unwrap() as HMENU, instance, null_mut(),
@@ -394,6 +402,8 @@ impl MainWindow {
         Ok(())
     }
 
+    /// Create a tooltip and assign it to given control.
+    ///
     fn create_control_tooltip(&self, control: Control, text: &WideCStr) {
         let instance = unsafe { GetWindowLongW(self.hwnd, GWL_HINSTANCE) as HINSTANCE };
         #[rustfmt::skip]
@@ -434,6 +444,9 @@ impl MainWindow {
                     ext, exe
                 ));
                 unsafe { SetWindowTextW(hwnd, s.as_ptr()) };
+                set_window_font(hwnd, &self.caption_font);
+            } else if let Some(msg) = &self.message {
+                unsafe { SetWindowTextW(hwnd, wcstring!(msg).as_ptr()) };
                 set_window_font(hwnd, &self.caption_font);
             } else {
                 ext.insert_str(0, ".");
@@ -527,6 +540,7 @@ impl MainWindow {
     }
 
     /// Move window control.
+    ///
     fn move_control(&self, control: Control, x: i32, y: i32, width: i32, height: i32) {
         let hwnd = self.get_control_handle(control);
         unsafe { MoveWindow(hwnd, x, y, width, height, win::TRUE) };
@@ -655,7 +669,7 @@ impl MainWindow {
         };
         let idx = self.lv_extensions.find_ext(&ext).or_else(|| {
             // insert to listview
-            if let Some(item) = self.lv_extensions.insert_item(0, &wcstring!(ext)) {
+            if let Some(item) = self.lv_extensions.insert_item(0, &wcstring!(&ext)) {
                 let name = self.get_distro_label(None);
                 self.lv_extensions
                     .set_subitem_text(item, 1, &wcstring!(name));
@@ -664,6 +678,7 @@ impl MainWindow {
             None
         });
         self.set_current_extension(idx);
+        self.message = Some(format!("Registered .{} extension.", &ext));
         self.update_control_states();
         Ok(0)
     }
@@ -673,6 +688,7 @@ impl MainWindow {
     fn on_save_button_clicked(&mut self) -> Result<LRESULT, Error> {
         if let Some(config) = self.current_ext_cfg.as_ref() {
             registry::register_extension(config)?;
+            self.message = Some(format!("Saved .{} extension.", config.extension));
             self.update_control_states();
             if let Some(item) = self.current_ext_idx {
                 let name = self.get_distro_label(config.distro.as_ref());
@@ -826,6 +842,7 @@ impl MainWindow {
         self.current_ext_cfg = self
             .get_current_extension()
             .and_then(|ext| registry::get_extension_config(&ext).ok());
+        self.message = None;
     }
 
     /// Launch icon picker dialog.
