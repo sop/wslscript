@@ -1,6 +1,6 @@
 [package]
 name = "wslscript"
-description = "Shell script handler for WSL"
+description = "Shell script handler for WSL."
 version = "0.5.0"
 authors = ["Joni Eskelinen <jonieske@gmail.com>"]
 edition = "2018"
@@ -24,3 +24,6 @@ features = ["transactions"]
 
 [build-dependencies]
 winres = "^0.1.11"
+toml = "^0.5"
+serde = "^1"
+serde_derive = "^1"
