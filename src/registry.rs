@@ -19,11 +19,15 @@ const LXSS_SUBKEY: &str = r"Software\Microsoft\Windows\CurrentVersion\Lxss";
 
 #[derive(Clone)]
 pub struct ExtConfig {
-    // filetype extension without leading dot
+    /// Filetype extension without leading dot.
     pub extension: String,
+    /// Icon for the filetype.
     pub icon: Option<ShellIcon>,
+    /// Hold mode.
     pub hold_mode: HoldMode,
+    /// Whether to run bash as an interactive shell.
     pub interactive: bool,
+    /// WSL distribution to run.
     pub distro: Option<DistroGUID>,
 }
 
@@ -196,7 +200,7 @@ pub fn register_extension(config: &ExtConfig) -> Result<(), Error> {
         key.delete_subkey_all("")
             .map_err(|e| ErrorKind::RegistryError { e })?;
     }
-    let cmd = get_command(config, &tx)?.to_os_string();
+    let cmd = get_command(config)?.to_os_string();
     let icon: Option<OsString> = config
         .icon
         .as_ref()
@@ -255,32 +259,15 @@ pub fn register_extension(config: &ExtConfig) -> Result<(), Error> {
 }
 
 /// Get the wslscript command for filetype registry.
-fn get_command(config: &ExtConfig, tx: &Transaction) -> Result<WideString, Error> {
+fn get_command(config: &ExtConfig) -> Result<WideString, Error> {
     let exe = WinPathBuf::new(std::env::current_exe()?)
         .canonicalize()?
         .without_extended();
     let mut cmd = WideString::new();
     cmd.push(exe.quoted());
-    if let Some(distro) = config
-        .distro
-        .as_ref()
-        .and_then(|distro| {
-            RegKey::predef(HKEY_CURRENT_USER)
-                .open_subkey_transacted(LXSS_SUBKEY, &tx)
-                .and_then(|k| k.open_subkey_transacted(distro.to_string(), &tx))
-                .ok()
-        })
-        .and_then(|k| k.get_value::<String, _>("DistributionName").ok())
-    {
-        cmd.push_slice(wch!(r#" -d ""#));
-        cmd.push_str(distro);
-        cmd.push_slice(wch!(r#"""#));
-    }
-    cmd.push_slice(wch!(" -h "));
-    cmd.push(config.hold_mode.as_wcstr().to_ustring());
-    if config.interactive {
-        cmd.push_slice(wch!(" -i "));
-    }
+    cmd.push_slice(wch!(r#" --ext ""#));
+    cmd.push_str(&config.extension);
+    cmd.push_slice(wch!(r#"""#));
     cmd.push_slice(wch!(r#" -E "%0" %*"#));
     Ok(cmd)
 }
@@ -407,7 +394,20 @@ pub fn query_distros() -> Result<Distros, Error> {
     Ok(distros)
 }
 
+/// Query distribution name by GUID.
+pub fn distro_guid_to_name(guid: DistroGUID) -> Option<OsString> {
+    if let Ok(key) = RegKey::predef(HKEY_CURRENT_USER)
+        .open_subkey(LXSS_SUBKEY)
+        .and_then(|k| k.open_subkey(guid.to_string()))
+    {
+        return key.get_value::<OsString, _>("DistributionName").ok();
+    }
+    None
+}
+
 /// Get configuration for given registered extension.
+///
+/// `ext` is the registered filename extension without a leading dot.
 pub fn get_extension_config(ext: &str) -> Result<ExtConfig, Error> {
     let handler_key = RegKey::predef(HKEY_CURRENT_USER)
         .open_subkey(CLASSES_SUBKEY)

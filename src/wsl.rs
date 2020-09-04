@@ -1,5 +1,5 @@
 use crate::error::*;
-use crate::registry::HoldMode;
+use crate::registry::{self, HoldMode};
 use failure::ResultExt;
 use std::env;
 use std::ffi::{OsStr, OsString};
@@ -161,11 +161,11 @@ fn wsl_bin_path() -> Result<PathBuf, Error> {
 
 /// Options for WSL invocation.
 pub struct WSLOptions {
-    /// mode after command exits.
+    /// Mode after the command exits.
     hold_mode: HoldMode,
     /// Whether to run bash as an interactive shell.
     interactive: bool,
-    /// WSL distribution to invoke.
+    /// Name of the WSL distribution to invoke.
     distribution: Option<OsString>,
 }
 
@@ -176,7 +176,16 @@ impl WSLOptions {
         let mut distribution = None;
         let mut iter = args.iter();
         while let Some(arg) = iter.next() {
-            if arg == "-h" {
+            // If extension parameter is present, load from registry.
+            // This is the default after 0.5.0 version. Other arguments are
+            // kept just for backwards compatibility for now.
+            if arg == "--ext" {
+                if let Some(ext) = iter.next().map(|s| s.to_string_lossy().into_owned()) {
+                    if let Some(opts) = Self::from_ext(&ext) {
+                        return opts;
+                    }
+                }
+            } else if arg == "-h" {
                 if let Some(mode) = iter
                     .next()
                     .and_then(|s| WideCString::from_os_str(s).ok())
@@ -194,6 +203,18 @@ impl WSLOptions {
             hold_mode,
             interactive,
             distribution,
+        }
+    }
+
+    fn from_ext(ext: &str) -> Option<Self> {
+        if let Ok(config) = registry::get_extension_config(ext) {
+            Some(Self {
+                hold_mode: config.hold_mode,
+                interactive: config.interactive,
+                distribution: config.distro.and_then(registry::distro_guid_to_name),
+            })
+        } else {
+            None
         }
     }
 }
