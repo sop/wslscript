@@ -316,6 +316,12 @@ impl MainWindow {
         ) };
         set_window_font(hwnd, &self.caption_font);
 
+        // hold more tooltip
+        self.create_control_tooltip(
+            Control::HoldModeCombo,
+            wcstr!("Console window behaviour when the script exits."),
+        );
+
         // interactive shell checkbox
         #[rustfmt::skip]
         unsafe { CreateWindowExW(
@@ -339,8 +345,8 @@ impl MainWindow {
         self.create_control_tooltip(
             Control::InteractiveCheckbox,
             wcstr!(
-                "Whether to run bash as an interactive shell, \
-                thus executing profile scripts (eg. ~/.bashrc)."
+                "Run bash as an interactive shell and execute \
+                profile scripts (eg. ~/.bashrc)."
             ),
         );
 
@@ -388,6 +394,12 @@ impl MainWindow {
             Control::DistroLabel.to_u16().unwrap() as HMENU, instance, null_mut()
         ) };
         set_window_font(hwnd, &self.caption_font);
+
+        // distro tooltip
+        self.create_control_tooltip(
+            Control::DistroCombo,
+            wcstr!("WSL distribution on which to run the script."),
+        );
 
         // save button
         #[rustfmt::skip]
@@ -439,7 +451,7 @@ impl MainWindow {
                     .and_then(|s| s.into_string().ok())
                     .unwrap_or_default();
                 let s = wcstring!(format!(
-                    ".{} handler found from another directory!\n\
+                    ".{} handler found in another directory!\n\
                      Did you move {}?",
                     ext, exe
                 ));
