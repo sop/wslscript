@@ -1,25 +1,25 @@
 [package]
 name = "wslscript"
 description = "Shell script handler for WSL."
-version = "0.5.0"
+version = "0.6.0"
 authors = ["Joni Eskelinen <jonieske@gmail.com>"]
 edition = "2018"
 
 [dependencies]
-failure = "^0.1.5"
-num-derive = "^0.2.5"
-num-traits = "^0.2.8"
+failure = "^0.1.8"
+num-derive = "^0.3.2"
+num-traits = "^0.2.12"
 shell32-sys = "^0.1.2"
-widestring = "^0.4.0"
-wchar = "^0.5.0"
+widestring = "^0.4.2"
+wchar = "^0.6.1"
 guid-create = "^0.1.1"
 
 [dependencies.winapi]
-version = "^0.3.7"
+version = "^0.3.9"
 features = ["winuser", "winbase", "errhandlingapi", "commctrl", "processenv", "shellapi"]
 
 [dependencies.winreg]
-version = "^0.6.0"
+version = "^0.7.0"
 features = ["transactions"]
 
 [build-dependencies]
@@ -27,3 +27,15 @@ winres = "^0.1.11"
 toml = "^0.5"
 serde = "^1"
 serde_derive = "^1"
+chrono = "^0.4"
+
+[profile.release]
+lto = "fat"
+codegen-units = 1
+panic = "abort"
+
+[profile.release.package."*"]
+opt-level = 3
+debug = false
+debug-assertions = false
+codegen-units = 1

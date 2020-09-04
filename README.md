@@ -28,7 +28,6 @@ Note that Drag & Drop handler may not work until reboot.
 
 ## TODO
 
-- [x] WSL distro selection
 - [ ] Optionally register for all users
 
 ## License

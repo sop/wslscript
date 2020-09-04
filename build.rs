@@ -39,11 +39,15 @@ fn compile_resources(cargo: &Cargo) {
     let manifest_path = PathBuf::from(env::var("OUT_DIR").unwrap()).join("manifest.xml");
     let mut f = File::create(manifest_path.clone()).unwrap();
     f.write_all(get_manifest(cargo).as_bytes()).unwrap();
+    let now = chrono::Local::now();
     winres::WindowsResource::new()
         .set_manifest_file(manifest_path.to_str().unwrap())
         .set_icon_with_id(icon.to_str().unwrap(), "app")
-        .set("InternalName", "wslscript.exe")
-        .set("LegalCopyright", "Joni Eskelinen © 2019")
+        .set("InternalName", &format!("{}.exe", cargo.package.name))
+        .set(
+            "LegalCopyright",
+            &format!("Joni Eskelinen © {}", now.format("%Y")),
+        )
         .compile()
         .unwrap();
 }
