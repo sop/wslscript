@@ -395,12 +395,12 @@ pub fn query_distros() -> Result<Distros, Error> {
 }
 
 /// Query distribution name by GUID.
-pub fn distro_guid_to_name(guid: DistroGUID) -> Option<OsString> {
+pub fn distro_guid_to_name(guid: DistroGUID) -> Option<String> {
     if let Ok(key) = RegKey::predef(HKEY_CURRENT_USER)
         .open_subkey(LXSS_SUBKEY)
         .and_then(|k| k.open_subkey(guid.to_string()))
     {
-        return key.get_value::<OsString, _>("DistributionName").ok();
+        return key.get_value::<String, _>("DistributionName").ok();
     }
     None
 }

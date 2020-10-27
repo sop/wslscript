@@ -38,18 +38,25 @@ fn main() {
 
 fn run_app() -> Result<(), Error> {
     // if program was started with the first and only argument being a .sh file
-    // this handles a script file dragged and dropped to wslscript.exe
+    // or one of the registered extensions.
+    // this handles a script file being dragged and dropped to wslscript.exe.
     if env::args_os().len() == 2 {
         if let Some(arg) = env::args_os()
             .nth(1)
             .filter(|arg| PathBuf::from(arg).exists())
-            .filter(|arg| {
-                let p = PathBuf::from(arg);
-                let ext = p.extension().unwrap_or_default().to_string_lossy();
-                ext == "sh"
-            })
         {
-            return execute_wsl(vec![arg], wsl::WSLOptions::default());
+            let path = PathBuf::from(&arg);
+            let ext = path.extension().unwrap_or_default().to_string_lossy();
+            // check whether extension is registered
+            let opts = match wsl::WSLOptions::from_ext(&ext) {
+                Some(opts) => Some(opts),
+                // if extension is ".sh", use default options
+                None if ext == "sh" => Some(wsl::WSLOptions::default()),
+                _ => None,
+            };
+            if let Some(opts) = opts {
+                return execute_wsl(vec![arg], opts);
+            }
         }
     }
     // seek for -E flag and collect all arguments after that
@@ -80,6 +87,6 @@ fn execute_wsl(args: Vec<OsString>, opts: wsl::WSLOptions) -> Result<(), Error> 
         }
     }
     // convert paths to WSL equivalents
-    let wsl_paths = wsl::paths_to_wsl(&paths)?;
-    wsl::run_wsl(&wsl_paths[0], &wsl_paths[1..], opts)
+    let wsl_paths = wsl::paths_to_wsl(&paths, &opts)?;
+    wsl::run_wsl(&wsl_paths[0], &wsl_paths[1..], &opts)
 }

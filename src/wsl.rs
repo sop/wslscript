@@ -14,7 +14,7 @@ use winapi::um::winbase;
 /// Run script with optional arguments in a WSL.
 ///
 /// Paths must be in WSL context.
-pub fn run_wsl(script_path: &PathBuf, args: &[PathBuf], opts: WSLOptions) -> Result<(), Error> {
+pub fn run_wsl(script_path: &PathBuf, args: &[PathBuf], opts: &WSLOptions) -> Result<(), Error> {
     let script_dir = script_path
         .parent()
         .ok_or_else(|| ErrorKind::InvalidPathError)?
@@ -50,11 +50,11 @@ pub fn run_wsl(script_path: &PathBuf, args: &[PathBuf], opts: WSLOptions) -> Res
             )));
         }
     }
-    // build command to start WSL process
+    // build command to start WSL process in a terminal window
     let mut cmd = process::Command::new(cmd_bin_path().as_os_str());
     cmd.args(&[OsStr::new("/C"), wsl_bin_path()?.as_os_str()]);
-    if let Some(distro) = opts.distribution {
-        cmd.args(&[OsStr::new("-d"), &distro]);
+    if let Some(distro) = &opts.distribution {
+        cmd.args(&[OsStr::new("-d"), distro]);
     }
     cmd.args(&[OsStr::new("-e"), OsStr::new("bash")]);
     if opts.interactive {
@@ -90,7 +90,7 @@ fn single_quote_escape(s: &OsStr) -> OsString {
 ///
 /// Multiple paths can be converted on a single WSL invocation.
 /// Converted paths are returned in the same order as given.
-pub fn paths_to_wsl(paths: &[PathBuf]) -> Result<Vec<PathBuf>, Error> {
+pub fn paths_to_wsl(paths: &[PathBuf], opts: &WSLOptions) -> Result<Vec<PathBuf>, Error> {
     // build a printf command that prints null separated results
     let mut printf_cmd = WideString::new();
     printf_cmd.push_slice(wch!(r"printf '%s\0'"));
@@ -107,6 +107,9 @@ pub fn paths_to_wsl(paths: &[PathBuf]) -> Result<Vec<PathBuf>, Error> {
         .for_each(|s| printf_cmd.push(s));
     let mut cmd = process::Command::new(wsl_bin_path()?);
     cmd.creation_flags(winbase::CREATE_NO_WINDOW);
+    if let Some(distro) = &opts.distribution {
+        cmd.args(&[OsStr::new("-d"), distro]);
+    }
     cmd.args(&[
         OsStr::new("-e"),
         OsStr::new("bash"),
@@ -196,7 +199,7 @@ impl WSLOptions {
             } else if arg == "-i" {
                 interactive = true;
             } else if arg == "-d" {
-                distribution = iter.next().map(|s| s.to_os_string());
+                distribution = iter.next().map(|s| s.to_owned());
             }
         }
         Self {
@@ -206,12 +209,19 @@ impl WSLOptions {
         }
     }
 
-    fn from_ext(ext: &str) -> Option<Self> {
+    /// Load options for registered extension.
+    ///
+    /// `ext` is the filename extension without a leading dot.
+    pub fn from_ext(ext: &str) -> Option<Self> {
         if let Ok(config) = registry::get_extension_config(ext) {
+            let distro = config
+                .distro
+                .and_then(registry::distro_guid_to_name)
+                .map(OsString::from);
             Some(Self {
                 hold_mode: config.hold_mode,
                 interactive: config.interactive,
-                distribution: config.distro.and_then(registry::distro_guid_to_name),
+                distribution: distro,
             })
         } else {
             None
