@@ -461,7 +461,7 @@ impl MainWindow {
                 unsafe { SetWindowTextW(hwnd, wcstring!(msg).as_ptr()) };
                 set_window_font(hwnd, &self.caption_font);
             } else {
-                ext.insert_str(0, ".");
+                ext.insert(0, '.');
                 unsafe { SetWindowTextW(hwnd, wcstring!(ext).as_ptr()) };
                 set_window_font(hwnd, &self.ext_font);
             }
@@ -861,7 +861,7 @@ impl MainWindow {
     ///
     /// Returns ShellIcon or None if no icon was selected.
     fn pick_icon_dlg(&self) -> Option<ShellIcon> {
-        let mut buf = [0 as WCHAR; MAX_PATH];
+        let mut buf = [0_u16; MAX_PATH];
         let mut idx: std::os::raw::c_int = 0;
         if let Some(si) = self
             .current_ext_cfg
@@ -1152,7 +1152,7 @@ impl WindowProc for MainWindow {
                 mmi.ptMinTrackSize.y = MIN_WINDOW_SIZE.1;
                 Some(0)
             }
-            WM_CTLCOLORSTATIC => Some(unsafe { GetStockObject(COLOR_WINDOW + 1 as i32) } as LPARAM),
+            WM_CTLCOLORSTATIC => Some(unsafe { GetStockObject(COLOR_WINDOW + 1_i32) } as LPARAM),
             WM_COMMAND => {
                 // if lParam is non-zero, message is from a control
                 if lparam != 0 {

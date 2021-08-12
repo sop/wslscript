@@ -128,7 +128,7 @@ impl WinPathBuf {
 
     /// Expand environment variables in a path.
     pub fn expand(&self) -> Result<Self, Error> {
-        let mut buf = [0 as WCHAR; 2048];
+        let mut buf = [0_u16; 2048];
         let len = unsafe {
             winapi::um::processenv::ExpandEnvironmentStringsW(
                 self.to_wide().as_ptr(),

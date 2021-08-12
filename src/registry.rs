@@ -452,7 +452,7 @@ pub fn is_extension_registered_for_wsl(ext: &str) -> Result<bool, Error> {
         .and_then(|key| key.get_value::<String, _>(""))
         .map(|val| val == format!("{}.{}", HANDLER_PREFIX, ext))
         // if .ext registry key didn't exist
-        .or_else(|_| Ok(false))
+        .or(Ok(false))
 }
 
 /// Check whether extension is associated with other than WSL Script.
@@ -465,7 +465,7 @@ pub fn is_registered_for_other(ext: &str) -> Result<bool, Error> {
         .and_then(|key| key.get_value::<String, _>(""))
         .map(|val| val != format!("{}.{}", HANDLER_PREFIX, ext))
         // if .ext registry key didn't exist
-        .or_else(|_| Ok(false))
+        .or(Ok(false))
 }
 
 /// Get executable path of the WSL Script handler.
