@@ -24,6 +24,7 @@ use widestring::*;
 
 fn main() {
     if let Err(e) = run_app() {
+        log::error!("{}", e);
         unsafe {
             use winapi::um::winuser::*;
             MessageBoxW(
@@ -37,6 +38,13 @@ fn main() {
 }
 
 fn run_app() -> Result<(), Error> {
+    // set up logging
+    #[cfg(feature = "debug")]
+    if let Ok(mut exe) = env::current_exe() {
+        exe.pop();
+        exe.push("wslscript.log");
+        simple_logging::log_to_file(exe, log::LevelFilter::Debug)?;
+    }
     // if program was started with the first and only argument being a .sh file
     // or one of the registered extensions.
     // this handles a script file being dragged and dropped to wslscript.exe.

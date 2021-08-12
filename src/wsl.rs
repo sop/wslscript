@@ -5,23 +5,23 @@ use std::env;
 use std::ffi::{OsStr, OsString};
 use std::os::windows::ffi::{OsStrExt, OsStringExt};
 use std::os::windows::process::CommandExt;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::{self, Stdio};
 use wchar::*;
 use widestring::*;
 use winapi::um::winbase;
 
+const MAX_CMD_LEN: usize = 8191;
+
 /// Run script with optional arguments in a WSL.
 ///
 /// Paths must be in WSL context.
-pub fn run_wsl(script_path: &PathBuf, args: &[PathBuf], opts: &WSLOptions) -> Result<(), Error> {
+pub fn run_wsl(script_path: &Path, args: &[PathBuf], opts: &WSLOptions) -> Result<(), Error> {
     let script_dir = script_path
         .parent()
-        .ok_or_else(|| ErrorKind::InvalidPathError)?
+        .ok_or(ErrorKind::InvalidPathError)?
         .as_os_str();
-    let script_file = script_path
-        .file_name()
-        .ok_or_else(|| ErrorKind::InvalidPathError)?;
+    let script_file = script_path.file_name().ok_or(ErrorKind::InvalidPathError)?;
     // command line to invoke in WSL
     let mut bash_cmd = WideString::new();
     // cd 'dir' && './progname'
@@ -49,6 +49,10 @@ pub fn run_wsl(script_path: &PathBuf, args: &[PathBuf], opts: &WSLOptions) -> Re
                 r#" { printf >&2 '\n[Process exited - exit code %d] ' "$?"; read -n 1 -s; }"#
             )));
         }
+    }
+    if bash_cmd.len() > MAX_CMD_LEN - 100 {
+        // TODO: store args to temporary file and pass via xargs
+        return Err(Error::from(ErrorKind::CommandTooLong));
     }
     // build command to start WSL process in a terminal window
     let mut cmd = process::Command::new(cmd_bin_path().as_os_str());
@@ -91,42 +95,47 @@ fn single_quote_escape(s: &OsStr) -> OsString {
 /// Multiple paths can be converted on a single WSL invocation.
 /// Converted paths are returned in the same order as given.
 pub fn paths_to_wsl(paths: &[PathBuf], opts: &WSLOptions) -> Result<Vec<PathBuf>, Error> {
-    // build a printf command that prints null separated results
-    let mut printf_cmd = WideString::new();
-    printf_cmd.push_slice(wch!(r"printf '%s\0'"));
-    paths
-        .iter()
-        .map(|path| {
-            // execute wslpath for each argument in subprocess
-            let mut s = WideString::new();
-            s.push_slice(wch!(r#" "$(wslpath -u '"#));
-            s.push_os_str(single_quote_escape(path.as_os_str()));
-            s.push_slice(wch!(r#"')""#));
-            s
-        })
-        .for_each(|s| printf_cmd.push(s));
-    let mut cmd = process::Command::new(wsl_bin_path()?);
-    cmd.creation_flags(winbase::CREATE_NO_WINDOW);
-    if let Some(distro) = &opts.distribution {
-        cmd.args(&[OsStr::new("-d"), distro]);
+    use winapi::shared::minwindef::MAX_PATH;
+    let mut wsl_paths: Vec<PathBuf> = Vec::with_capacity(paths.len());
+    let mut path_idx = 0;
+    while path_idx < paths.len() {
+        // build a printf command that prints null separated results
+        let mut printf = WideString::new();
+        printf.push_slice(wch!(r"printf '%s\0'"));
+        // convert multiple paths on single WSL invocation up to maximum command line length
+        while path_idx < paths.len() && printf.len() < MAX_CMD_LEN - MAX_PATH - 100 {
+            printf.push_slice(wch!(r#" "$(wslpath -u '"#));
+            printf.push_os_str(single_quote_escape(paths[path_idx].as_os_str()));
+            printf.push_slice(wch!(r#"')""#));
+            path_idx += 1;
+        }
+        log::debug!("printf command length {}", printf.len());
+        let mut cmd = process::Command::new(wsl_bin_path()?);
+        cmd.creation_flags(winbase::CREATE_NO_WINDOW);
+        if let Some(distro) = &opts.distribution {
+            cmd.args(&[OsStr::new("-d"), distro]);
+        }
+        cmd.args(&[
+            OsStr::new("-e"),
+            OsStr::new("bash"),
+            OsStr::new("-c"),
+            &printf.to_os_string(),
+        ]);
+        let output = cmd.output().context(ErrorKind::WinToUnixPathError)?;
+        if !output.status.success() {
+            return Err(Error::from(ErrorKind::WinToUnixPathError));
+        }
+        wsl_paths.extend(
+            std::str::from_utf8(&output.stdout)
+                .context(ErrorKind::StringToPathUTF8Error)?
+                .trim()
+                .trim_matches('\0')
+                .split('\0')
+                .map(PathBuf::from),
+        )
     }
-    cmd.args(&[
-        OsStr::new("-e"),
-        OsStr::new("bash"),
-        OsStr::new("-c"),
-        &printf_cmd.to_os_string(),
-    ]);
-    let output = cmd.output().context(ErrorKind::WinToUnixPathError)?;
-    if !output.status.success() {
-        return Err(Error::from(ErrorKind::WinToUnixPathError));
-    }
-    Ok(std::str::from_utf8(&output.stdout)
-        .context(ErrorKind::StringToPathUTF8Error)?
-        .trim()
-        .trim_matches('\0')
-        .split('\0')
-        .map(PathBuf::from)
-        .collect())
+    log::debug!("Converted {} Windows paths to WSL", wsl_paths.len());
+    Ok(wsl_paths)
 }
 
 /// Returns the path to Windows command prompt executable.

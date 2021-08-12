@@ -19,6 +19,9 @@ pub enum ErrorKind {
     #[fail(display = "Invalid path.")]
     InvalidPathError,
 
+    #[fail(display = "Command is too long.")]
+    CommandTooLong,
+
     #[fail(display = "String is not nul terminated.")]
     MissingNulError,
 
