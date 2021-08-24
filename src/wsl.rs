@@ -1,5 +1,7 @@
 use crate::error::*;
 use crate::registry::{self, HoldMode};
+use crate::wcstring;
+use crate::win32::*;
 use failure::ResultExt;
 use std::env;
 use std::ffi::{OsStr, OsString};
@@ -9,6 +11,7 @@ use std::path::{Path, PathBuf};
 use std::process::{self, Stdio};
 use wchar::*;
 use widestring::*;
+use winapi::shared::minwindef::MAX_PATH;
 use winapi::um::winbase;
 
 const MAX_CMD_LEN: usize = 8191;
@@ -17,43 +20,18 @@ const MAX_CMD_LEN: usize = 8191;
 ///
 /// Paths must be in WSL context.
 pub fn run_wsl(script_path: &Path, args: &[PathBuf], opts: &WSLOptions) -> Result<(), Error> {
-    let script_dir = script_path
-        .parent()
-        .ok_or(ErrorKind::InvalidPathError)?
-        .as_os_str();
-    let script_file = script_path.file_name().ok_or(ErrorKind::InvalidPathError)?;
-    // command line to invoke in WSL
-    let mut bash_cmd = WideString::new();
-    // cd 'dir' && './progname'
-    bash_cmd.push_slice(wch!("cd '"));
-    bash_cmd.push_os_str(single_quote_escape(script_dir));
-    bash_cmd.push_slice(wch!("' && './"));
-    bash_cmd.push_os_str(single_quote_escape(script_file));
-    bash_cmd.push_slice(wch!("'"));
-    // arguments from drag & drop
-    for arg in args {
-        bash_cmd.push_slice(wch!(" '"));
-        bash_cmd.push_os_str(single_quote_escape(arg.as_os_str()));
-        bash_cmd.push_slice(wch!("'"));
-    }
-    // commands after script exits
-    match opts.hold_mode {
-        HoldMode::Never => {}
-        HoldMode::Always | HoldMode::Error => {
-            if opts.hold_mode == HoldMode::Always {
-                bash_cmd.push_slice(wch!(";"));
-            } else {
-                bash_cmd.push_slice(wch!(" ||"))
-            }
-            bash_cmd.push_os_str(OsString::from_wide(wch!(
-                r#" { printf >&2 '\n[Process exited - exit code %d] ' "$?"; read -n 1 -s; }"#
-            )));
+    // maximum length of the bash command
+    const MAX_BASH_LEN: usize = MAX_CMD_LEN - MAX_PATH - MAX_PATH - 20;
+    // TODO: remove temporary file afterwards
+    let mut bash_cmd = compose_bash_command(script_path, args, opts, false)?;
+    if bash_cmd.cmd.len() > MAX_BASH_LEN {
+        // retry and force to write arguments into temporary file
+        bash_cmd = compose_bash_command(script_path, args, opts, true)?;
+        if bash_cmd.cmd.len() > MAX_BASH_LEN {
+            return Err(Error::from(ErrorKind::CommandTooLong));
         }
     }
-    if bash_cmd.len() > MAX_CMD_LEN - 100 {
-        // TODO: store args to temporary file and pass via xargs
-        return Err(Error::from(ErrorKind::CommandTooLong));
-    }
+    log::debug!("Bash command: {}", bash_cmd.cmd.to_string_lossy());
     // build command to start WSL process in a terminal window
     let mut cmd = process::Command::new(cmd_bin_path().as_os_str());
     cmd.args(&[OsStr::new("/C"), wsl_bin_path()?.as_os_str()]);
@@ -64,16 +42,143 @@ pub fn run_wsl(script_path: &Path, args: &[PathBuf], opts: &WSLOptions) -> Resul
     if opts.interactive {
         cmd.args(&[OsStr::new("-i")]);
     }
-    cmd.args(&[OsStr::new("-c"), &bash_cmd.to_os_string()]);
+    cmd.args(&[OsStr::new("-c"), &bash_cmd.cmd.to_os_string()]);
     // start as a detached process in a new process group so we can safely
     // exit this program and have the script execute on it's own
     cmd.creation_flags(winbase::DETACHED_PROCESS | winbase::CREATE_NEW_PROCESS_GROUP);
-    cmd.stdin(Stdio::null())
+    let mut proc: process::Child = cmd
+        .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null())
         .spawn()
         .context(ErrorKind::WSLProcessError)?;
+    // if temporary file was created for the arguments
+    if let Some(tmpfile) = bash_cmd.tmpfile {
+        // wait for process to exit
+        let _ = proc.wait();
+        log::debug!("Removing temporary file {}", tmpfile.to_string_lossy());
+        if std::fs::remove_file(tmpfile).is_err() {
+            log::debug!("Failed to remove temporary file");
+        }
+    }
     Ok(())
+}
+
+struct BashCmdResult {
+    cmd: WideString,
+    tmpfile: Option<PathBuf>,
+}
+
+fn compose_bash_command(
+    script_path: &Path,
+    args: &[PathBuf],
+    opts: &WSLOptions,
+    force_args_in_file: bool,
+) -> Result<BashCmdResult, Error> {
+    let script_dir = script_path
+        .parent()
+        .ok_or(ErrorKind::InvalidPathError)?
+        .as_os_str();
+    let script_file = script_path.file_name().ok_or(ErrorKind::InvalidPathError)?;
+    // command line to invoke in WSL
+    let mut cmd = WideString::new();
+    let tmpfile = if force_args_in_file ||
+        // heuristic test whether argument list is too long to be passed on command line
+        args.iter().fold(0, |acc, s| acc + s.as_os_str().len()) > (MAX_CMD_LEN / 2)
+    {
+        let argfile = write_args_to_temp_file(args)?;
+        let path = path_to_wsl(&argfile, opts)?;
+        cmd.push_slice(wch!("mapfile -d '' -t args < '"));
+        cmd.push_os_str(single_quote_escape(path.as_os_str()));
+        cmd.push_slice(wch!("' && "));
+        Some(argfile)
+    } else {
+        None
+    };
+    // cd 'dir' && './progname'
+    cmd.push_slice(wch!("cd '"));
+    cmd.push_os_str(single_quote_escape(script_dir));
+    cmd.push_slice(wch!("' && './"));
+    cmd.push_os_str(single_quote_escape(script_file));
+    cmd.push_slice(wch!("'"));
+    // if arguments are being passed via temporary file
+    if tmpfile.is_some() {
+        cmd.push_slice(wch!(" \"${args[@]}\""));
+    }
+    // insert arguments to command line
+    else {
+        for arg in args {
+            cmd.push_slice(wch!(" '"));
+            cmd.push_os_str(single_quote_escape(arg.as_os_str()));
+            cmd.push_slice(wch!("'"));
+        }
+    }
+    // commands after script exits
+    match opts.hold_mode {
+        HoldMode::Never => {}
+        HoldMode::Always | HoldMode::Error => {
+            if opts.hold_mode == HoldMode::Always {
+                cmd.push_slice(wch!(";"));
+            } else {
+                cmd.push_slice(wch!(" ||"))
+            }
+            cmd.push_os_str(OsString::from_wide(wch!(
+                r#" { printf >&2 '\n[Process exited - exit code %d] ' "$?"; read -n 1 -s; }"#
+            )));
+        }
+    }
+    Ok(BashCmdResult { cmd, tmpfile })
+}
+
+/// Write arguments to temporary file as a nul separated list.
+fn write_args_to_temp_file(args: &[PathBuf]) -> Result<PathBuf, Error> {
+    use std::io::prelude::*;
+    let temp = create_temp_file()?;
+    let paths: Result<Vec<_>, _> = args
+        .iter()
+        .map(|p| {
+            p.to_str()
+                .ok_or_else(|| Error::from(ErrorKind::StringToPathUTF8Error))
+        })
+        .collect();
+    let s = match paths {
+        Err(e) => return Err(e),
+        Ok(p) => p.join("\0"),
+    };
+    let mut file = std::fs::OpenOptions::new()
+        .write(true)
+        .truncate(true)
+        .open(&temp)?;
+    file.write_all(s.as_bytes())?;
+    log::debug!("Args written to: {}", temp.to_string_lossy());
+    Ok(temp)
+}
+
+/// Create a temporary file.
+///
+/// Returned path is an empty file in Window's temp file directory.
+fn create_temp_file() -> Result<PathBuf, Error> {
+    use winapi::um::fileapi as fa;
+    let mut buf = [0u16; MAX_PATH + 1];
+    let len = unsafe { fa::GetTempPathW(buf.len() as u32, buf.as_mut_ptr()) };
+    if len == 0 {
+        return Err(last_error());
+    }
+    let temp_dir = unsafe { WideCString::from_ptr_with_nul(buf.as_ptr(), len as usize + 1)? };
+    let uniq = unsafe {
+        fa::GetTempFileNameW(
+            temp_dir.as_ptr(),
+            wcstring!("wsl").as_ptr(),
+            0,
+            buf.as_mut_ptr(),
+        )
+    };
+    if uniq == 0 {
+        return Err(last_error());
+    }
+    let temp_path = unsafe { WideCString::from_ptr_with_nul(buf.as_ptr(), buf.len())? };
+    log::debug!("Temp path {}", temp_path.to_string_lossy());
+    Ok(PathBuf::from(temp_path.to_string_lossy()))
 }
 
 /// Escape single quotes in an OsString.
@@ -90,12 +195,20 @@ fn single_quote_escape(s: &OsStr) -> OsString {
     OsString::from_wide(&w)
 }
 
+/// Convert single Windows path to WSL equivalent.
+fn path_to_wsl(path: &Path, opts: &WSLOptions) -> Result<PathBuf, Error> {
+    let mut paths = paths_to_wsl(&[path.to_owned()], opts)?;
+    let p = paths
+        .pop()
+        .ok_or_else(|| Error::from(ErrorKind::WinToUnixPathError))?;
+    Ok(p)
+}
+
 /// Convert Windows paths to WSL equivalents.
 ///
 /// Multiple paths can be converted on a single WSL invocation.
 /// Converted paths are returned in the same order as given.
 pub fn paths_to_wsl(paths: &[PathBuf], opts: &WSLOptions) -> Result<Vec<PathBuf>, Error> {
-    use winapi::shared::minwindef::MAX_PATH;
     let mut wsl_paths: Vec<PathBuf> = Vec::with_capacity(paths.len());
     let mut path_idx = 0;
     while path_idx < paths.len() {
