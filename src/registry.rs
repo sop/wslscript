@@ -248,11 +248,11 @@ pub fn register_extension(config: &ExtConfig) -> Result<(), Error> {
     let value = "{86C86720-42A0-1069-A2E8-08002B30309D}";
     set_value(&tx, &base, &path, "", &value)?;
     // Software\Classes\.ext - Register handler for extension
-    let path = &format!(".{}", ext);
+    let path = format!(".{}", ext);
     set_value(&tx, &base, &path, "", &name)?;
     set_value(&tx, &base, &path, "PerceivedType", &"application")?;
     // Software\Classes\.ext\OpenWithProgIds - Add extension to open with list
-    let path = &format!(r".{}\OpenWithProgIds", ext);
+    let path = format!(r".{}\OpenWithProgIds", ext);
     set_value(&tx, &base, &path, &name, &"")?;
     tx.commit().map_err(|e| ErrorKind::RegistryError { e })?;
     Ok(())
@@ -280,7 +280,7 @@ fn set_value<T: winreg::types::ToRegValue>(
     name: &str,
     value: &T,
 ) -> Result<(), Error> {
-    base.create_subkey_transacted(path, &tx)
+    base.create_subkey_transacted(path, tx)
         .and_then(|(key, _)| key.set_value(name, value))
         .map_err(|e| Error::from(ErrorKind::RegistryError { e }))
 }

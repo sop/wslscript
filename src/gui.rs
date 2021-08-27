@@ -973,7 +973,7 @@ impl MainWindow {
 
     /// Get label for distribution GUID.
     fn get_distro_label(&self, guid: Option<&registry::DistroGUID>) -> String {
-        guid.and_then(|guid| self.distros.list.get(&guid).map(|s| s.to_owned()))
+        guid.and_then(|guid| self.distros.list.get(guid).map(|s| s.to_owned()))
             .or_else(|| Some(String::from("Default")))
             .unwrap_or_default()
     }

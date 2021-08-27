@@ -14,6 +14,7 @@ use widestring::*;
 use winapi::shared::minwindef::MAX_PATH;
 use winapi::um::winbase;
 
+/// Maximum command line length on Windows.
 const MAX_CMD_LEN: usize = 8191;
 
 /// Run script with optional arguments in a WSL.
@@ -22,8 +23,8 @@ const MAX_CMD_LEN: usize = 8191;
 pub fn run_wsl(script_path: &Path, args: &[PathBuf], opts: &WSLOptions) -> Result<(), Error> {
     // maximum length of the bash command
     const MAX_BASH_LEN: usize = MAX_CMD_LEN - MAX_PATH - MAX_PATH - 20;
-    // TODO: remove temporary file afterwards
     let mut bash_cmd = compose_bash_command(script_path, args, opts, false)?;
+    // if arguments won't fit into command line
     if bash_cmd.cmd.len() > MAX_BASH_LEN {
         // retry and force to write arguments into temporary file
         bash_cmd = compose_bash_command(script_path, args, opts, true)?;
@@ -52,9 +53,9 @@ pub fn run_wsl(script_path: &Path, args: &[PathBuf], opts: &WSLOptions) -> Resul
         .stderr(Stdio::null())
         .spawn()
         .context(ErrorKind::WSLProcessError)?;
-    // if temporary file was created for the arguments
+    // if a temporary file was created for the arguments
     if let Some(tmpfile) = bash_cmd.tmpfile {
-        // wait for process to exit
+        // wait for the process to exit
         let _ = proc.wait();
         log::debug!("Removing temporary file {}", tmpfile.to_string_lossy());
         if std::fs::remove_file(tmpfile).is_err() {
@@ -65,10 +66,16 @@ pub fn run_wsl(script_path: &Path, args: &[PathBuf], opts: &WSLOptions) -> Resul
 }
 
 struct BashCmdResult {
+    /// Command line for bash
     cmd: WideString,
+    /// Path to temporary file containing the script arguments
     tmpfile: Option<PathBuf>,
 }
 
+/// Build bash command to execute script with given arguments.
+///
+/// If arguments are too long to fit on a command line, write them to temporary
+/// file and fetch on WSL side using bash's `mapfile` builtin.
 fn compose_bash_command(
     script_path: &Path,
     args: &[PathBuf],
@@ -88,6 +95,7 @@ fn compose_bash_command(
     {
         let argfile = write_args_to_temp_file(args)?;
         let path = path_to_wsl(&argfile, opts)?;
+        // read arguments from temporary file into $args variable
         cmd.push_slice(wch!("mapfile -d '' -t args < '"));
         cmd.push_os_str(single_quote_escape(path.as_os_str()));
         cmd.push_slice(wch!("' && "));
@@ -156,7 +164,7 @@ fn write_args_to_temp_file(args: &[PathBuf]) -> Result<PathBuf, Error> {
 
 /// Create a temporary file.
 ///
-/// Returned path is an empty file in Window's temp file directory.
+/// Returned path is an empty file in Windows's temp file directory.
 fn create_temp_file() -> Result<PathBuf, Error> {
     use winapi::um::fileapi as fa;
     let mut buf = [0u16; MAX_PATH + 1];
