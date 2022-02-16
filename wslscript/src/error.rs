@@ -1,6 +1,5 @@
 use crate::wcstring;
 use std::fmt::{self, Display};
-use widestring::*;
 
 #[derive(Debug, Fail)]
 pub enum ErrorKind {
@@ -44,7 +43,7 @@ pub struct Error {
 }
 
 impl Error {
-    pub fn to_wide(&self) -> WideCString {
+    pub fn to_wide(&self) -> widestring::WideCString {
         wcstring!(self.to_string())
     }
 }
@@ -69,8 +68,8 @@ impl From<std::io::Error> for Error {
     }
 }
 
-impl From<widestring::MissingNulError<WideChar>> for Error {
-    fn from(_: widestring::MissingNulError<WideChar>) -> Error {
+impl From<widestring::error::MissingNulTerminator> for Error {
+    fn from(_: widestring::error::MissingNulTerminator) -> Error {
         Error::from(ErrorKind::MissingNulError)
     }
 }

@@ -12,11 +12,14 @@ use winapi::um::winnt::*;
 /// WideCString from &str
 macro_rules! wcstring {
     ($x:expr) => {
-        WideCString::from_str($x).unwrap_or_else(|e| {
+        ::widestring::WideCString::from_str($x).unwrap_or_else(|e| {
             let p = e.nul_position();
-            let mut v = e.into_vec();
-            v.resize(p, 0);
-            WideCString::new(v).unwrap()
+            if let Some(mut v) = e.into_vec() {
+                v.resize(p, 0);
+                ::widestring::WideCString::from_vec_truncate(v)
+            } else {
+                ::widestring::WideCString::default()
+            }
         })
     };
 }
@@ -25,8 +28,8 @@ macro_rules! wcstring {
 /// WideCStr from static string literal
 macro_rules! wcstr {
     ($x:expr) => {
-        // wch_c always inserts nul, so we can safely unwrap
-        WideCStr::from_slice_with_nul(wchar::wch_c!($x)).unwrap()
+        // wchz always inserts nul, so we can safely unwrap
+        WideCStr::from_slice_truncate(wchar::wchz!($x)).unwrap()
     };
 }
 
@@ -39,7 +42,7 @@ mod tests {
     }
     #[test]
     fn test_wcstr() {
-        assert_eq!(wcstr!("test").as_slice(), &wch_c!("test")[0..4]);
+        assert_eq!(wcstr!("test").as_slice(), &wchz!("test")[0..4]);
     }
 }
 
@@ -139,7 +142,7 @@ impl WinPathBuf {
         if len == 0 {
             return Err(last_error());
         }
-        let path = unsafe { WideCString::from_ptr_with_nul_unchecked(buf.as_ptr(), len as usize) };
+        let path = unsafe { WideCString::from_ptr_unchecked(buf.as_ptr(), len as usize) };
         let len = unsafe {
             winapi::um::fileapi::GetLongPathNameW(
                 path.as_ptr(),
@@ -150,8 +153,7 @@ impl WinPathBuf {
         if len == 0 {
             return Err(last_error());
         }
-        let path =
-            unsafe { WideCString::from_ptr_with_nul_unchecked(buf.as_ptr(), (len + 1) as usize) };
+        let path = unsafe { WideCString::from_ptr_unchecked(buf.as_ptr(), (len + 1) as usize) };
         Ok(Self::from(path.as_ucstr()))
     }
 }

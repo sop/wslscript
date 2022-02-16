@@ -1,6 +1,4 @@
-# VS Code
 /.vscode/
-
-# Rust
 /target/
+/build/
 **/*.rs.bk

@@ -34,8 +34,10 @@ fn read_cargo() -> Cargo {
 }
 
 fn compile_resources(cargo: &Cargo) {
-    let icon =
-        PathBuf::from(env::var("CARGO_MANIFEST_DIR").unwrap()).join("assets/icon/terminal.ico");
+    let icon = PathBuf::from(env::var("CARGO_MANIFEST_DIR").unwrap())
+        .parent()
+        .unwrap()
+        .join("assets/icon/terminal.ico");
     let manifest_path = PathBuf::from(env::var("OUT_DIR").unwrap()).join("manifest.xml");
     let mut f = File::create(manifest_path.clone()).unwrap();
     f.write_all(get_manifest(cargo).as_bytes()).unwrap();

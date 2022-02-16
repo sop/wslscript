@@ -40,9 +40,9 @@ pub enum HoldMode {
 }
 
 impl HoldMode {
-    const WCSTR_NEVER: &'static [WideChar] = wch_c!("never");
-    const WCSTR_ALWAYS: &'static [WideChar] = wch_c!("always");
-    const WCSTR_ERROR: &'static [WideChar] = wch_c!("error");
+    const WCSTR_NEVER: &'static [WideChar] = wchz!("never");
+    const WCSTR_ALWAYS: &'static [WideChar] = wchz!("always");
+    const WCSTR_ERROR: &'static [WideChar] = wchz!("error");
 
     /// Create from nul terminated wide string.
     pub fn from_wcstr(s: &WideCStr) -> Option<Self> {
@@ -64,9 +64,9 @@ impl HoldMode {
     /// Get mode string as a nul terminated wide string.
     pub fn as_wcstr(self) -> &'static WideCStr {
         match self {
-            Self::Never => unsafe { WideCStr::from_slice_with_nul_unchecked(Self::WCSTR_NEVER) },
-            Self::Always => unsafe { WideCStr::from_slice_with_nul_unchecked(Self::WCSTR_ALWAYS) },
-            Self::Error => unsafe { WideCStr::from_slice_with_nul_unchecked(Self::WCSTR_ERROR) },
+            Self::Never => unsafe { WideCStr::from_slice_unchecked(Self::WCSTR_NEVER) },
+            Self::Always => unsafe { WideCStr::from_slice_unchecked(Self::WCSTR_ALWAYS) },
+            Self::Error => unsafe { WideCStr::from_slice_unchecked(Self::WCSTR_ERROR) },
         }
     }
 

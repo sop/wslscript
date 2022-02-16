@@ -172,7 +172,7 @@ fn create_temp_file() -> Result<PathBuf, Error> {
     if len == 0 {
         return Err(last_error());
     }
-    let temp_dir = unsafe { WideCString::from_ptr_with_nul(buf.as_ptr(), len as usize + 1)? };
+    let temp_dir = unsafe { WideCString::from_ptr_truncate(buf.as_ptr(), len as usize + 1) };
     let uniq = unsafe {
         fa::GetTempFileNameW(
             temp_dir.as_ptr(),
@@ -184,7 +184,7 @@ fn create_temp_file() -> Result<PathBuf, Error> {
     if uniq == 0 {
         return Err(last_error());
     }
-    let temp_path = unsafe { WideCString::from_ptr_with_nul(buf.as_ptr(), buf.len())? };
+    let temp_path = unsafe { WideCString::from_ptr_truncate(buf.as_ptr(), buf.len()) };
     log::debug!("Temp path {}", temp_path.to_string_lossy());
     Ok(PathBuf::from(temp_path.to_string_lossy()))
 }

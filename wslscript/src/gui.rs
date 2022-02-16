@@ -844,7 +844,7 @@ impl MainWindow {
             );
             buf.set_len(len as usize);
         }
-        WideCString::new(buf).unwrap().to_string_lossy()
+        WideCString::from_vec(buf).unwrap().to_string_lossy()
     }
 
     /// Set extension that is currently selected for edit.
@@ -885,8 +885,7 @@ impl MainWindow {
         }
         match buf.iter().position(|&c| c == 0) {
             Some(pos) => {
-                let path =
-                    unsafe { WideCString::from_vec_with_nul_unchecked(&buf[..=pos as usize]) };
+                let path = unsafe { WideCString::from_vec_unchecked(&buf[..=pos as usize]) };
                 if let Ok(p) = WinPathBuf::from(path.as_ucstr()).expand() {
                     match ShellIcon::load(p, idx as u32) {
                         Ok(icon) => Some(icon),
@@ -1114,7 +1113,7 @@ impl ExtensionsListView {
             );
             buf.set_len(len as usize);
         };
-        WideCString::new(buf).ok().map(|u| u.to_string_lossy())
+        WideCString::from_vec(buf).ok().map(|u| u.to_string_lossy())
     }
 }
 
