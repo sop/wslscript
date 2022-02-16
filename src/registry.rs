@@ -245,6 +245,8 @@ pub fn register_extension(config: &ExtConfig) -> Result<(), Error> {
     set_value(&tx, &base, &path, "", &cmd.as_os_str())?;
     // Software\Classes\wslscript.ext\shellex\DropHandler - Drop handler
     let path = format!(r"{}\shellex\DropHandler", name);
+    // {60254CA5-953B-11CF-8C96-00AA00B8708C} (WSH DropHandler)
+    // {86C86720-42A0-1069-A2E8-08002B30309D} (EXE DropHandler)
     let value = "{86C86720-42A0-1069-A2E8-08002B30309D}";
     set_value(&tx, &base, &path, "", &value)?;
     // Software\Classes\.ext - Register handler for extension
@@ -255,6 +257,9 @@ pub fn register_extension(config: &ExtConfig) -> Result<(), Error> {
     let path = format!(r".{}\OpenWithProgIds", ext);
     set_value(&tx, &base, &path, &name, &"")?;
     tx.commit().map_err(|e| ErrorKind::RegistryError { e })?;
+    // TODO: call SHChangeNotify() with SHCNE_ASSOCCHANGED
+    // See: https://docs.microsoft.com/en-us/windows/win32/shell/fa-file-types
+    // See: https://docs.microsoft.com/en-us/windows/win32/api/shlobj_core/nf-shlobj_core-shchangenotify
     Ok(())
 }
 

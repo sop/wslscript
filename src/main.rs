@@ -45,6 +45,11 @@ fn run_app() -> Result<(), Error> {
         exe.push("wslscript.log");
         simple_logging::log_to_file(exe, log::LevelFilter::Debug)?;
     }
+    // log command line arguments
+    #[cfg(feature = "debug")]
+    env::args_os()
+        .enumerate()
+        .for_each(|(n, arg)| log::debug!("Arg {}: {}", n, arg.to_string_lossy()));
     // if program was started with the first and only argument being a .sh file
     // or one of the registered extensions.
     // this handles a script file being dragged and dropped to wslscript.exe.
