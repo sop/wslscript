@@ -4,6 +4,7 @@ use once_cell::sync::Lazy;
 use std::cell::RefCell;
 use std::path::PathBuf;
 use std::str::FromStr;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use wchar::*;
 use widestring::WideCString;
 use winapi::shared::guiddef;
@@ -23,6 +24,9 @@ static HANDLER_CLSID: Lazy<Guid> =
 /// IClassFactory GUID
 static CLASS_FACTORY_CLSID: Lazy<Guid> =
     Lazy::new(|| Guid::from_str("00000001-0000-0000-c000-000000000046").unwrap());
+
+/// Semaphore to keep track of running WSL threads
+pub(crate) static THREAD_COUNTER: AtomicUsize = AtomicUsize::new(0);
 
 // https://docs.microsoft.com/en-us/windows/win32/dlls/dllmain
 #[no_mangle]
@@ -71,8 +75,14 @@ extern "system" fn DllMain(
 // https://docs.microsoft.com/en-us/windows/win32/api/combaseapi/nf-combaseapi-dllcanunloadnow
 #[no_mangle]
 extern "system" fn DllCanUnloadNow() -> HRESULT {
-    log::debug!("DllCanUnloadNow");
-    winerror::S_OK
+    let n = THREAD_COUNTER.load(Ordering::SeqCst);
+    if n > 0 {
+        log::debug!("{} WSL threads running, denying DLL unload", n);
+        winerror::S_FALSE
+    } else {
+        log::debug!("Permitting DLL unload");
+        winerror::S_OK
+    }
 }
 
 // https://docs.microsoft.com/en-us/windows/win32/api/combaseapi/nf-combaseapi-dllgetclassobject

@@ -1,6 +1,7 @@
 use crate::error::*;
 use crate::icon::ShellIcon;
 use crate::win32::*;
+// TODO: see if we could use guid_win crate
 use guid_create::GUID;
 use std::collections::HashMap;
 use std::ffi::OsString;

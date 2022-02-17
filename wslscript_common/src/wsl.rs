@@ -53,6 +53,9 @@ pub fn run_wsl(script_path: &Path, args: &[PathBuf], opts: &WSLOptions) -> Resul
         .stderr(Stdio::null())
         .spawn()
         .context(ErrorKind::WSLProcessError)?;
+    // always wait on debug to spot errors
+    #[cfg(feature = "debug")]
+    let _ = proc.wait();
     // if a temporary file was created for the arguments
     if let Some(tmpfile) = bash_cmd.tmpfile {
         // wait for the process to exit

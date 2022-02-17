@@ -1,4 +1,6 @@
 use std::path::{Path, PathBuf};
+use std::sync::atomic::Ordering;
+use std::thread;
 use widestring::UCStr;
 use winapi::shared::ntdef;
 use winapi::shared::winerror;
@@ -8,7 +10,7 @@ use winapi::um::winbase;
 use winapi::um::winuser;
 use wslscript_common::error::*;
 use wslscript_common::win32;
-use wslscript_common::wsl;
+use wslscript_common::wsl::{self, WSLOptions};
 
 mod interface;
 mod types;
@@ -19,19 +21,32 @@ mod types;
 fn handle_dropped_files(target: &PathBuf, data_obj: &objidl::IDataObject) -> Result<(), Error> {
     log::debug!("Dropped to {}", target.to_string_lossy());
     let opts = get_wsl_options(target)?;
-    let mut paths = vec![target.clone()];
+    // read paths from data object
     let mut args = get_paths_from_data_obj(data_obj)?;
-    log::debug!("{} files received", args.len());
-    paths.append(&mut args);
-    let paths = wsl::paths_to_wsl(&paths, &opts)?;
-    if paths.len() < 2 {
+    if args.is_empty() {
         return Err(Error::from(ErrorKind::LogicError {
-            s: "Not enough arguments",
+            s: "No paths received",
         }));
     }
-    // TODO: run in a thread, now explorer shows loading icon while wsl is running
-    // if temporary file removal is being waited
-    wsl::run_wsl(&paths[0], &paths[1..], &opts)
+    log::debug!("{} files received", args.len());
+    let mut paths = vec![target.clone()];
+    paths.append(&mut args);
+    // increment thread counter
+    interface::THREAD_COUNTER.fetch_add(1, Ordering::SeqCst);
+    // move further processing to thread
+    thread::spawn(move || {
+        log::debug!("Spawned thread to invoke WSL");
+        if let Err(e) = run_wsl(paths, opts) {
+            log::error!("Failed to invoke WSL: {}", e);
+        }
+        interface::THREAD_COUNTER.fetch_sub(1, Ordering::SeqCst);
+    });
+    Ok(())
+}
+
+fn run_wsl(win_paths: Vec<PathBuf>, opts: WSLOptions) -> Result<(), Error> {
+    let wsl_paths = wsl::paths_to_wsl(&win_paths, &opts)?;
+    wsl::run_wsl(&wsl_paths[0], &wsl_paths[1..], &opts)
 }
 
 /// Get WSL options from registry based on given filename's extension.
