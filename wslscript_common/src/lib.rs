@@ -1,1 +1,11 @@
+#[macro_use]
+extern crate failure;
 
+pub mod error;
+pub mod icon;
+pub mod registry;
+#[macro_use]
+pub mod win32;
+pub mod wsl;
+
+pub use win32::{wcstr, wcstring};

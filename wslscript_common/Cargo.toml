@@ -2,3 +2,29 @@
 name = "wslscript_common"
 version = "0.1.0"
 edition = "2021"
+
+[dependencies]
+failure = "0.1.8"
+widestring = "0.5.1"
+wchar = "0.11.0"
+guid-create = "0.1.1"
+log = { version = "0.4.14", features = ["release_max_level_off"] }
+simple-logging = "2.0.2"
+
+[dependencies.winapi]
+version = "0.3.9"
+features = [
+    "winuser",
+    "winbase",
+    "errhandlingapi",
+    "commctrl",
+    "processenv",
+    "shellapi",
+]
+
+[dependencies.winreg]
+version = "0.7.0"
+features = ["transactions"]
+
+[features]
+debug = []

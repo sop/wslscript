@@ -4,15 +4,17 @@ use once_cell::sync::Lazy;
 use std::cell::RefCell;
 use std::path::PathBuf;
 use std::str::FromStr;
+use wchar::*;
 use widestring::WideCString;
 use winapi::shared::guiddef;
-use winapi::shared::minwindef;
+use winapi::shared::minwindef as win;
 use winapi::shared::windef;
 use winapi::shared::winerror;
 use winapi::shared::wtypesbase;
 use winapi::um::objidl;
 use winapi::um::oleidl;
 use winapi::um::winnt;
+use wslscript_common::wcstring;
 
 /// Our shell extension GUID: {81521ebe-a2d4-450b-9bf8-5c23ed8730d0}
 static HANDLER_CLSID: Lazy<Guid> =
@@ -25,10 +27,10 @@ static CLASS_FACTORY_CLSID: Lazy<Guid> =
 // https://docs.microsoft.com/en-us/windows/win32/dlls/dllmain
 #[no_mangle]
 extern "system" fn DllMain(
-    _hinstance: minwindef::HINSTANCE,
-    reason: minwindef::DWORD,
-    _reserved: minwindef::LPVOID,
-) -> minwindef::BOOL {
+    _hinstance: win::HINSTANCE,
+    reason: win::DWORD,
+    _reserved: win::LPVOID,
+) -> win::BOOL {
     match reason {
         winnt::DLL_PROCESS_ATTACH => {
             // set up logging
@@ -39,16 +41,14 @@ extern "system" fn DllMain(
                     if simple_logging::log_to_file(&path, log::LevelFilter::Debug).is_err() {
                         unsafe {
                             use winapi::um::winuser::*;
-                            let text = WideCString::from_str(format!(
+                            let text = wcstring(format!(
                                 "Failed to set up logging to {}",
                                 path.to_string_lossy()
-                            ))
-                            .unwrap_or_default();
-                            let caption = WideCString::from_str("Error").unwrap_or_default();
+                            ));
                             MessageBoxW(
                                 std::ptr::null_mut(),
                                 text.as_ptr(),
-                                caption.as_ptr(),
+                                wchz!("Error").as_ptr(),
                                 MB_OK | MB_ICONERROR | MB_SERVICE_NOTIFICATION,
                             );
                         }
@@ -56,7 +56,7 @@ extern "system" fn DllMain(
                 }
             }
             log::debug!("DLL_PROCESS_ATTACH");
-            return minwindef::TRUE;
+            return win::TRUE;
         }
         winnt::DLL_PROCESS_DETACH => {}
         winnt::DLL_THREAD_ATTACH => {}
@@ -65,7 +65,7 @@ extern "system" fn DllMain(
         }
         _ => {}
     }
-    minwindef::FALSE
+    win::FALSE
 }
 
 // https://docs.microsoft.com/en-us/windows/win32/api/combaseapi/nf-combaseapi-dllcanunloadnow
@@ -80,7 +80,7 @@ extern "system" fn DllCanUnloadNow() -> HRESULT {
 extern "system" fn DllGetClassObject(
     class_id: guiddef::REFCLSID,
     iid: guiddef::REFIID,
-    result: *mut minwindef::LPVOID,
+    result: *mut win::LPVOID,
 ) -> HRESULT {
     let class_guid = guid_from_ref(class_id);
     let interface_guid = guid_from_ref(iid);
@@ -115,12 +115,12 @@ const fn guid_from_ref(clsid: guiddef::REFCLSID) -> Guid {
 
 /// Get directory for the module instance.
 #[cfg(feature = "debug")]
-fn get_module_directory(hinstance: minwindef::HINSTANCE) -> Option<PathBuf> {
+fn get_module_directory(hinstance: win::HINSTANCE) -> Option<PathBuf> {
     use std::ffi::OsString;
     use std::os::windows::ffi::OsStringExt;
     use winapi::shared::ntdef;
     use winapi::um::libloaderapi::GetModuleFileNameW as GetModuleFileName;
-    let mut buf: Vec<ntdef::WCHAR> = Vec::with_capacity(minwindef::MAX_PATH);
+    let mut buf: Vec<ntdef::WCHAR> = Vec::with_capacity(win::MAX_PATH);
     unsafe {
         let len = GetModuleFileName(hinstance, buf.as_mut_ptr(), buf.capacity() as _);
         buf.set_len(len as _);
@@ -147,13 +147,13 @@ com::interfaces! {
         fn Load(
             &self,
             pszFileName: wtypesbase::LPCOLESTR,
-            dwMode: minwindef::DWORD,
+            dwMode: win::DWORD,
         ) -> HRESULT;
 
         fn Save(
             &self,
             pszFileName: wtypesbase::LPCOLESTR,
-            fRemember: minwindef::BOOL,
+            fRemember: win::BOOL,
         ) -> HRESULT;
 
         fn SaveCompleted(
@@ -180,16 +180,16 @@ com::interfaces! {
         fn DragEnter(
             &self,
             pDataObj: *const objidl::IDataObject,
-            grfKeyState: minwindef::DWORD,
+            grfKeyState: win::DWORD,
             pt: *const windef::POINTL,
-            pdwEffect: *mut minwindef::DWORD,
+            pdwEffect: *mut win::DWORD,
         ) -> HRESULT;
 
         fn DragOver(
             &self,
-            grfKeyState: minwindef::DWORD,
+            grfKeyState: win::DWORD,
             pt: *const windef::POINTL,
-            pdwEffect: *mut minwindef::DWORD,
+            pdwEffect: *mut win::DWORD,
         ) -> HRESULT;
 
         fn DragLeave(&self) -> HRESULT;
@@ -197,15 +197,16 @@ com::interfaces! {
         fn Drop(
             &self,
             pDataObj: *const objidl::IDataObject,
-            grfKeyState: minwindef::DWORD,
+            grfKeyState: win::DWORD,
             pt: *const windef::POINTL,
-            pdwEffect: *mut minwindef::DWORD,
+            pdwEffect: *mut win::DWORD,
         ) -> HRESULT;
     }
 }
 
 com::class! {
     pub class Handler: IHandler, IPersistFile(IPersist), IDropTarget {
+        // File that is receiving the drop.
         target: RefCell<PathBuf>
     }
 
@@ -224,9 +225,9 @@ com::class! {
         fn Load(
             &self,
             pszFileName: wtypesbase::LPCOLESTR,
-            _dwMode: minwindef::DWORD,
+            _dwMode: win::DWORD,
         ) -> HRESULT {
-            // path to the file that received the drag, ie. the script file
+            // path to the file that received the drop, ie. the script file
             let path = unsafe {
                 PathBuf::from(WideCString::from_ptr_str(pszFileName).to_os_string())
             };
@@ -243,7 +244,7 @@ com::class! {
         fn Save(
             &self,
             _pszFileName: wtypesbase::LPCOLESTR,
-            _fRemember: minwindef::BOOL,
+            _fRemember: win::BOOL,
         ) -> HRESULT {
             log::debug!("IPersistFile::Save");
             winerror::S_FALSE
@@ -288,9 +289,9 @@ com::class! {
         fn DragEnter(
             &self,
             _pDataObj: *const objidl::IDataObject,
-            _grfKeyState: minwindef::DWORD,
+            _grfKeyState: win::DWORD,
             _pt: *const windef::POINTL,
-            _pdwEffect: *mut minwindef::DWORD,
+            _pdwEffect: *mut win::DWORD,
         ) -> HRESULT {
             log::debug!("IDropTarget::DragEnter");
             winerror::S_OK
@@ -299,9 +300,9 @@ com::class! {
         /// https://docs.microsoft.com/en-us/windows/win32/api/oleidl/nf-oleidl-idroptarget-dragover
         fn DragOver(
             &self,
-            _grfKeyState: minwindef::DWORD,
+            _grfKeyState: win::DWORD,
             _pt: *const windef::POINTL,
-            _pdwEffect: *mut minwindef::DWORD,
+            _pdwEffect: *mut win::DWORD,
         ) -> HRESULT {
             log::debug!("IDropTarget::DragOver");
             winerror::S_OK
@@ -317,19 +318,23 @@ com::class! {
         fn Drop(
             &self,
             pDataObj: *const objidl::IDataObject,
-            _grfKeyState: minwindef::DWORD,
+            _grfKeyState: win::DWORD,
             _pt: *const windef::POINTL,
-            pdwEffect: *mut minwindef::DWORD,
+            pdwEffect: *mut win::DWORD,
         ) -> HRESULT {
             log::debug!("IDropTarget::Drop");
-            let obj = unsafe { &*pDataObj };
             if let Ok(target) = self.target.try_borrow() {
-                if super::handle_dropped_files(&target, obj).is_ok() {
+                let obj = unsafe { &*pDataObj };
+                super::handle_dropped_files(&target, obj).and_then(|_| {
                     unsafe { *pdwEffect = oleidl::DROPEFFECT_COPY; }
-                    return winerror::S_OK;
-                }
+                    Ok(winerror::S_OK)
+                }).unwrap_or_else(|e| {
+                    log::debug!("Drop failed: {}", e);
+                    winerror::E_UNEXPECTED
+                })
+            } else {
+                winerror::E_UNEXPECTED
             }
-            winerror::E_UNEXPECTED
         }
     }
 }

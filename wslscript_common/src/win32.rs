@@ -6,31 +6,24 @@ use std::ptr::null_mut;
 use wchar::*;
 use widestring::*;
 use winapi::shared::minwindef::*;
-use winapi::um::winnt::*;
+use winapi::um::winnt;
 
-#[macro_export]
-/// WideCString from &str
-macro_rules! wcstring {
-    ($x:expr) => {
-        ::widestring::WideCString::from_str($x).unwrap_or_else(|e| {
-            let p = e.nul_position();
-            if let Some(mut v) = e.into_vec() {
-                v.resize(p, 0);
-                ::widestring::WideCString::from_vec_truncate(v)
-            } else {
-                ::widestring::WideCString::default()
-            }
-        })
-    };
+/// Convert &str to WideCString
+pub fn wcstring<T: AsRef<str>>(s: T) -> WideCString {
+    WideCString::from_str(s).unwrap_or_else(|e| {
+        let p = e.nul_position();
+        if let Some(mut v) = e.into_vec() {
+            v.resize(p, 0);
+            WideCString::from_vec_truncate(v)
+        } else {
+            WideCString::default()
+        }
+    })
 }
 
-#[macro_export]
-/// WideCStr from static string literal
-macro_rules! wcstr {
-    ($x:expr) => {
-        // wchz always inserts nul, so we can safely unwrap
-        WideCStr::from_slice_truncate(wchar::wchz!($x)).unwrap()
-    };
+/// Convert WCHAR slice _(usually from `wchz!` macro)_ to WideCStr
+pub fn wcstr(s: &[wchar_t]) -> &WideCStr {
+    WideCStr::from_slice_truncate(s).unwrap_or_default()
 }
 
 #[cfg(test)]
@@ -38,11 +31,11 @@ mod tests {
     use super::*;
     #[test]
     fn test_wcstring_with_null() {
-        assert_eq!(wcstring!("with\0null"), wcstring!("with"));
+        assert_eq!(wcstring("with\0null"), wcstring("with"));
     }
     #[test]
     fn test_wcstr() {
-        assert_eq!(wcstr!("test").as_slice(), &wchz!("test")[0..4]);
+        assert_eq!(wcstr(wchz!("test")).as_slice(), &wchz!("test")[0..4]);
     }
 }
 
@@ -53,7 +46,7 @@ pub fn error_message(msg: &WideCStr) {
         MessageBoxW(
             null_mut(),
             msg.as_ptr(),
-            wcstr!("Error").as_ptr(),
+            wcstr(wchz!("Error")).as_ptr(),
             MB_OK | MB_ICONERROR,
         );
     }
@@ -62,7 +55,7 @@ pub fn error_message(msg: &WideCStr) {
 /// Get the last WinAPI error.
 pub fn last_error() -> Error {
     use winapi::um::winbase::*;
-    let mut buf: LPWSTR = null_mut();
+    let mut buf: winnt::LPWSTR = null_mut();
     let errno = unsafe { winapi::um::errhandlingapi::GetLastError() };
     let res = unsafe {
         FormatMessageW(
@@ -71,8 +64,11 @@ pub fn last_error() -> Error {
                 | FORMAT_MESSAGE_ALLOCATE_BUFFER,
             null_mut(),
             errno,
-            DWORD::from(MAKELANGID(LANG_NEUTRAL, SUBLANG_DEFAULT)),
-            &mut buf as *mut LPWSTR as _,
+            DWORD::from(winnt::MAKELANGID(
+                winnt::LANG_NEUTRAL,
+                winnt::SUBLANG_DEFAULT,
+            )),
+            &mut buf as *mut winnt::LPWSTR as _,
             0,
             null_mut(),
         )

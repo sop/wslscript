@@ -83,9 +83,9 @@ checksum = "14c189c53d098945499cdfa7ecc63567cf3886b3332b312a5b4585d8d3a6a610"
 
 [[package]]
 name = "cc"
-version = "1.0.72"
+version = "1.0.73"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "22a9137b95ea06864e018375b72adfb7db6e6f68cfc8df5a04d00288050485ee"
+checksum = "2fff2a6927b3bb87f9595d67196a70493f627687a71d87a0d692242c33f58c11"
 
 [[package]]
 name = "cfg-if"
@@ -516,16 +516,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "shell32-sys"
-version = "0.1.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9ee04b46101f57121c9da2b151988283b6beb79b34f5bb29a58ee48cb695122c"
-dependencies = [
- "winapi 0.2.8",
- "winapi-build",
-]
-
-[[package]]
 name = "simple-logging"
 version = "2.0.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -702,26 +692,33 @@ name = "wslscript"
 version = "0.6.2"
 dependencies = [
  "chrono",
- "failure",
- "guid-create",
  "log",
  "num-derive",
  "num-traits",
  "serde",
  "serde_derive",
- "shell32-sys",
  "simple-logging",
  "toml",
  "wchar",
  "widestring",
  "winapi 0.3.9",
- "winreg",
  "winres",
+ "wslscript_common",
 ]
 
 [[package]]
 name = "wslscript_common"
 version = "0.1.0"
+dependencies = [
+ "failure",
+ "guid-create",
+ "log",
+ "simple-logging",
+ "wchar",
+ "widestring",
+ "winapi 0.3.9",
+ "winreg",
+]
 
 [[package]]
 name = "wslscript_handler"
@@ -732,6 +729,8 @@ dependencies = [
  "log",
  "once_cell",
  "simple-logging",
+ "wchar",
  "widestring",
  "winapi 0.3.9",
+ "wslscript_common",
 ]

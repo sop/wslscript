@@ -33,6 +33,9 @@ pub enum ErrorKind {
     #[fail(display = "WinAPI error: {}", s)]
     WinAPIError { s: String },
 
+    #[fail(display = "Drop handler error: {}", s)]
+    DropHandlerError { s: String },
+
     #[fail(display = "Logic error: {}", s)]
     LogicError { s: &'static str },
 }
@@ -44,7 +47,7 @@ pub struct Error {
 
 impl Error {
     pub fn to_wide(&self) -> widestring::WideCString {
-        wcstring!(self.to_string())
+        wcstring(self.to_string())
     }
 }
 

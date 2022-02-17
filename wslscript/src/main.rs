@@ -1,26 +1,14 @@
 #![windows_subsystem = "windows"]
 
-#[macro_use]
-extern crate failure;
-extern crate guid_create;
-extern crate shell32;
-extern crate wchar;
-extern crate winapi;
-extern crate winreg;
-
-mod error;
-mod font;
-mod gui;
-mod icon;
-mod registry;
-mod win32;
-mod wsl;
-
-use error::*;
 use std::env;
 use std::ffi::OsString;
 use std::path::PathBuf;
-use widestring::*;
+use wchar::*;
+use wslscript_common::error::*;
+use wslscript_common::wsl;
+
+mod font;
+mod gui;
 
 fn main() {
     if let Err(e) = run_app() {
@@ -30,7 +18,7 @@ fn main() {
             MessageBoxW(
                 std::ptr::null_mut(),
                 e.to_wide().as_ptr(),
-                wcstr!("Error").as_ptr(),
+                wchz!("Error").as_ptr(),
                 MB_OK | MB_ICONERROR | MB_SERVICE_NOTIFICATION,
             );
         }

@@ -1,14 +1,14 @@
-use crate::error::*;
-use crate::win32::*;
 use std::mem::{size_of, zeroed};
 use std::ptr::null_mut;
-use winapi::shared::minwindef as win;
-use winapi::shared::windef::*;
-use winapi::um::wingdi::*;
-use winapi::um::winuser::*;
+use winapi::shared::minwindef;
+use winapi::shared::windef;
+use winapi::um::wingdi;
+use winapi::um::winuser;
+use wslscript_common::error::*;
+use wslscript_common::win32;
 
 pub struct Font {
-    pub handle: HFONT,
+    pub handle: windef::HFONT,
 }
 
 impl Font {
@@ -17,29 +17,29 @@ impl Font {
     }
 
     pub fn new_caption(size: i32) -> Result<Self, Error> {
-        let mut metrics = NONCLIENTMETRICSW {
-            cbSize: size_of::<NONCLIENTMETRICSW>() as u32,
+        let mut metrics = winuser::NONCLIENTMETRICSW {
+            cbSize: size_of::<winuser::NONCLIENTMETRICSW>() as u32,
             ..unsafe { zeroed() }
         };
-        if win::FALSE
+        if minwindef::FALSE
             == unsafe {
-                SystemParametersInfoW(
-                    SPI_GETNONCLIENTMETRICS,
+                winuser::SystemParametersInfoW(
+                    winuser::SPI_GETNONCLIENTMETRICS,
                     metrics.cbSize,
                     &mut metrics as *mut _ as *mut _,
                     0,
                 )
             }
         {
-            return Err(last_error());
+            return Err(win32::last_error());
         }
-        let mut lf: LOGFONTW = metrics.lfCaptionFont;
+        let mut lf: wingdi::LOGFONTW = metrics.lfCaptionFont;
         if size > 0 {
             lf.lfHeight = size;
         }
-        let font = unsafe { CreateFontIndirectW(&lf) };
+        let font = unsafe { wingdi::CreateFontIndirectW(&lf) };
         if font.is_null() {
-            return Err(last_error());
+            return Err(win32::last_error());
         }
         Ok(Self { handle: font })
     }
@@ -48,7 +48,7 @@ impl Font {
 impl Drop for Font {
     fn drop(&mut self) {
         if !self.handle.is_null() {
-            unsafe { DeleteObject(self.handle as HGDIOBJ) };
+            unsafe { wingdi::DeleteObject(self.handle as windef::HGDIOBJ) };
         }
     }
 }

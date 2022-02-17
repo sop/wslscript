@@ -5,8 +5,8 @@ use std::str::FromStr;
 use wchar::*;
 use widestring::*;
 use winapi::shared::windef::*;
-use winapi::um::libloaderapi::*;
-use winapi::um::shellapi::*;
+use winapi::um::libloaderapi;
+use winapi::um::shellapi;
 use winapi::um::winuser::*;
 
 /// The Old New Thing - How the shell converts an icon location into an icon
@@ -22,7 +22,13 @@ pub struct ShellIcon {
 impl ShellIcon {
     pub fn load(path: WinPathBuf, index: u32) -> Result<Self, Error> {
         let s = path.to_wide();
-        let handle = unsafe { ExtractIconW(GetModuleHandleW(null_mut()), s.as_ptr(), index) };
+        let handle = unsafe {
+            shellapi::ExtractIconW(
+                libloaderapi::GetModuleHandleW(null_mut()),
+                s.as_ptr(),
+                index,
+            )
+        };
         if handle.is_null() {
             return Err(Error::from(ErrorKind::WinAPIError {
                 s: String::from("No icon found from the file."),

@@ -176,7 +176,7 @@ fn create_temp_file() -> Result<PathBuf, Error> {
     let uniq = unsafe {
         fa::GetTempFileNameW(
             temp_dir.as_ptr(),
-            wcstring!("wsl").as_ptr(),
+            wcstring("wsl").as_ptr(),
             0,
             buf.as_mut_ptr(),
         )
