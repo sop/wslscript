@@ -19,26 +19,26 @@ struct CargoPackage {
 }
 
 fn main() {
-    let cargo = read_cargo();
-    let icon = PathBuf::from(env::var("CARGO_MANIFEST_DIR").unwrap())
-        .parent()
-        .unwrap()
-        .join("assets/icon/terminal.ico");
+    let handler_cargo = handler_cargo();
+    let wslscript_cargo = wslscript_cargo();
     let manifest_path = PathBuf::from(env::var("OUT_DIR").unwrap()).join("manifest.xml");
     let mut f = File::create(manifest_path.clone()).unwrap();
-    f.write_all(get_manifest(&cargo).as_bytes()).unwrap();
+    f.write_all(get_manifest(&handler_cargo, &wslscript_cargo).as_bytes())
+        .unwrap();
     let now = chrono::Local::now();
-    let version = parse_version(&cargo.package.version);
+    let version = parse_version(&wslscript_cargo.package.version);
     winres::WindowsResource::new()
         .set_manifest_file(manifest_path.to_str().unwrap())
-        .set_icon_with_id(icon.to_str().unwrap(), "app")
         .set("ProductName", "WSL Script")
-        .set("FileDescription", &cargo.package.description)
-        .set("FileVersion", &cargo.package.version)
+        .set("FileDescription", &handler_cargo.package.description)
+        .set("FileVersion", &wslscript_cargo.package.version)
         .set_version_info(VersionInfo::FILEVERSION, version)
-        .set("ProductVersion", &cargo.package.version)
+        .set("ProductVersion", &wslscript_cargo.package.version)
         .set_version_info(VersionInfo::PRODUCTVERSION, version)
-        .set("InternalName", &format!("{}.exe", cargo.package.name))
+        .set(
+            "InternalName",
+            &format!("{}.dll", handler_cargo.package.name),
+        )
         .set(
             "LegalCopyright",
             &format!("Joni Eskelinen © {}", now.format("%Y")),
@@ -57,7 +57,7 @@ fn parse_version(s: &str) -> u64 {
     (parts[0] as u64) << 48 | (parts[1] as u64) << 32 | (parts[2] as u64) << 16 | (parts[3] as u64)
 }
 
-fn get_manifest(cargo: &Cargo) -> String {
+fn get_manifest(handler_cargo: &Cargo, wslscript_cargo: &Cargo) -> String {
     format!(
         r#"<?xml version="1.0" encoding="utf-8" standalone="yes"?>
 <assembly xmlns="urn:schemas-microsoft-com:asm.v1"
@@ -66,28 +66,32 @@ fn get_manifest(cargo: &Cargo) -> String {
         name="{name}"
         type="win32" />
     <description>{description}</description>
-    <dependency>
-        <dependentAssembly>
-            <assemblyIdentity type="win32"
-                name="Microsoft.Windows.Common-Controls"
-                version="6.0.0.0"
-                processorArchitecture="*"
-                publicKeyToken="6595b64144ccf1df"
-                language="*" />
-        </dependentAssembly>
-    </dependency>
 </assembly>"#,
-        name = format!("github.sop.{}", cargo.package.name),
-        description = cargo.package.description,
-        version = format!("{}.0", cargo.package.version)
+        name = format!("github.sop.{}", handler_cargo.package.name),
+        description = handler_cargo.package.description,
+        version = format!("{}.0", wslscript_cargo.package.version)
     )
 }
 
-fn read_cargo() -> Cargo {
+fn handler_cargo() -> Cargo {
     let mut toml = String::new();
     File::open(PathBuf::from(env::var("CARGO_MANIFEST_DIR").unwrap()).join("Cargo.toml"))
         .unwrap()
         .read_to_string(&mut toml)
         .unwrap();
+    toml::from_str::<Cargo>(&toml).unwrap()
+}
+
+fn wslscript_cargo() -> Cargo {
+    let mut toml = String::new();
+    File::open(
+        PathBuf::from(env::var("CARGO_MANIFEST_DIR").unwrap())
+            .parent()
+            .unwrap()
+            .join("wslscript/Cargo.toml"),
+    )
+    .unwrap()
+    .read_to_string(&mut toml)
+    .unwrap();
     toml::from_str::<Cargo>(&toml).unwrap()
 }

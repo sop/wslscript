@@ -29,8 +29,12 @@ fn run_app() -> Result<(), Error> {
     // set up logging
     #[cfg(feature = "debug")]
     if let Ok(mut exe) = env::current_exe() {
+        let stem = exe.file_stem().map_or_else(
+            || "debug.log".to_string(),
+            |s| s.to_string_lossy().into_owned(),
+        );
         exe.pop();
-        exe.push("wslscript.log");
+        exe.push(format!("{}.log", stem));
         simple_logging::log_to_file(exe, log::LevelFilter::Debug)?;
     }
     // log command line arguments

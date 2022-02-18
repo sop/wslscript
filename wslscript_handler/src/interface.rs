@@ -15,11 +15,8 @@ use winapi::shared::wtypesbase;
 use winapi::um::objidl;
 use winapi::um::oleidl;
 use winapi::um::winnt;
+use wslscript_common::error::*;
 use wslscript_common::wcstring;
-
-/// Our shell extension GUID: {81521ebe-a2d4-450b-9bf8-5c23ed8730d0}
-static HANDLER_CLSID: Lazy<Guid> =
-    Lazy::new(|| Guid::from_str("81521ebe-a2d4-450b-9bf8-5c23ed8730d0").unwrap());
 
 /// IClassFactory GUID
 static CLASS_FACTORY_CLSID: Lazy<Guid> =
@@ -28,20 +25,29 @@ static CLASS_FACTORY_CLSID: Lazy<Guid> =
 /// Semaphore to keep track of running WSL threads
 pub(crate) static THREAD_COUNTER: AtomicUsize = AtomicUsize::new(0);
 
+/// Handle to loaded DLL module.
+static mut DLL_HANDLE: win::HINSTANCE = std::ptr::null_mut();
+
 // https://docs.microsoft.com/en-us/windows/win32/dlls/dllmain
 #[no_mangle]
 extern "system" fn DllMain(
-    _hinstance: win::HINSTANCE,
+    hinstance: win::HINSTANCE,
     reason: win::DWORD,
     _reserved: win::LPVOID,
 ) -> win::BOOL {
     match reason {
         winnt::DLL_PROCESS_ATTACH => {
+            unsafe { DLL_HANDLE = hinstance };
             // set up logging
             #[cfg(feature = "debug")]
             {
-                if let Some(mut path) = get_module_directory(_hinstance) {
-                    path.push("wslscript_handler.log");
+                if let Ok(mut path) = get_module_path(hinstance) {
+                    let stem = path.file_stem().map_or_else(
+                        || "debug.log".to_string(),
+                        |s| s.to_string_lossy().into_owned(),
+                    );
+                    path.pop();
+                    path.push(format!("{}.log", stem));
                     if simple_logging::log_to_file(&path, log::LevelFilter::Debug).is_err() {
                         unsafe {
                             use winapi::um::winuser::*;
@@ -95,7 +101,7 @@ extern "system" fn DllGetClassObject(
     let class_guid = guid_from_ref(class_id);
     let interface_guid = guid_from_ref(iid);
     // expect our registered class ID
-    if HANDLER_CLSID.eq(&class_guid) {
+    if wslscript_common::DROP_HANDLER_CLSID.eq(&class_guid) {
         // expect IClassFactory interface to be requested
         if !CLASS_FACTORY_CLSID.eq(&interface_guid) {
             log::warn!("Expected IClassFactory, got {}", interface_guid);
@@ -116,6 +122,38 @@ extern "system" fn DllGetClassObject(
     winerror::CLASS_E_CLASSNOTAVAILABLE
 }
 
+// https://docs.microsoft.com/en-us/windows/win32/api/olectl/nf-olectl-dllregisterserver
+#[no_mangle]
+extern "system" fn DllRegisterServer() -> HRESULT {
+    let hinstance = unsafe { DLL_HANDLE };
+    let path = match get_module_path(hinstance) {
+        Ok(p) => p,
+        Err(_) => return winerror::E_UNEXPECTED,
+    };
+    log::debug!("DllRegisterServer for {}", path.to_string_lossy());
+    match wslscript_common::registry::add_server_to_registry(&path) {
+        Ok(_) => (),
+        Err(e) => {
+            log::error!("Failed to register server: {}", e);
+            return winerror::E_UNEXPECTED;
+        }
+    }
+    winerror::S_OK
+}
+
+//https://docs.microsoft.com/en-us/windows/win32/api/olectl/nf-olectl-dllunregisterserver
+#[no_mangle]
+extern "system" fn DllUnregisterServer() -> HRESULT {
+    match wslscript_common::registry::remove_server_from_registry() {
+        Ok(_) => (),
+        Err(e) => {
+            log::error!("Failed to unregister server: {}", e);
+            return winerror::E_UNEXPECTED;
+        }
+    }
+    winerror::S_OK
+}
+
 /// Convert Win32 GUID pointer to Guid struct.
 const fn guid_from_ref(clsid: guiddef::REFCLSID) -> Guid {
     Guid {
@@ -123,21 +161,19 @@ const fn guid_from_ref(clsid: guiddef::REFCLSID) -> Guid {
     }
 }
 
-/// Get directory for the module instance.
-#[cfg(feature = "debug")]
-fn get_module_directory(hinstance: win::HINSTANCE) -> Option<PathBuf> {
+/// Get path to dll module.
+fn get_module_path(hinstance: win::HINSTANCE) -> Result<PathBuf, Error> {
     use std::ffi::OsString;
     use std::os::windows::ffi::OsStringExt;
     use winapi::shared::ntdef;
     use winapi::um::libloaderapi::GetModuleFileNameW as GetModuleFileName;
     let mut buf: Vec<ntdef::WCHAR> = Vec::with_capacity(win::MAX_PATH);
-    unsafe {
-        let len = GetModuleFileName(hinstance, buf.as_mut_ptr(), buf.capacity() as _);
-        buf.set_len(len as _);
+    let len = unsafe { GetModuleFileName(hinstance, buf.as_mut_ptr(), buf.capacity() as _) };
+    if len == 0 {
+        return Err(wslscript_common::win32::last_error());
     }
-    let mut path = PathBuf::from(OsString::from_wide(&buf));
-    path.pop();
-    Some(path)
+    unsafe { buf.set_len(len as _) };
+    Ok(PathBuf::from(OsString::from_wide(&buf)))
 }
 
 // See https://www.magnumdb.com/ for interface GUID's.
@@ -287,7 +323,7 @@ com::class! {
             pClassID: *mut guiddef::CLSID,
         ) -> HRESULT {
             log::debug!("IPersist::GetClassID");
-            let guid = HANDLER_CLSID.0;
+            let guid = wslscript_common::DROP_HANDLER_CLSID.0;
             unsafe { *pClassID = guid }
             winerror::S_OK
         }

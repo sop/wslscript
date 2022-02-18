@@ -30,11 +30,17 @@ pub enum ErrorKind {
     #[fail(display = "IO error: {}", e)]
     IOError { e: std::io::Error },
 
+    #[fail(display = "Dynamic library error: {}", s)]
+    LibraryError { s: String },
+
     #[fail(display = "WinAPI error: {}", s)]
     WinAPIError { s: String },
 
     #[fail(display = "Drop handler error: {}", s)]
     DropHandlerError { s: String },
+
+    #[fail(display = "Error: {}", s)]
+    GenericError { s: String },
 
     #[fail(display = "Logic error: {}", s)]
     LogicError { s: &'static str },

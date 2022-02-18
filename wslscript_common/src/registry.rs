@@ -1,15 +1,18 @@
 use crate::error::*;
 use crate::icon::ShellIcon;
 use crate::win32::*;
-// TODO: see if we could use guid_win crate
-use guid_create::GUID;
+use guid_win::Guid;
+use once_cell::sync::Lazy;
 use std::collections::HashMap;
 use std::ffi::OsString;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::pin::Pin;
 use std::str::FromStr;
 use wchar::*;
 use widestring::*;
+use winapi::shared::minwindef;
+use winapi::shared::winerror;
+use winapi::um::winnt;
 use winreg::enums::*;
 use winreg::transaction::Transaction;
 use winreg::RegKey;
@@ -17,6 +20,10 @@ use winreg::RegKey;
 const HANDLER_PREFIX: &str = "wslscript";
 const CLASSES_SUBKEY: &str = r"Software\Classes";
 const LXSS_SUBKEY: &str = r"Software\Microsoft\Windows\CurrentVersion\Lxss";
+
+/// Drop handler shell extension GUID: {81521ebe-a2d4-450b-9bf8-5c23ed8730d0}
+pub static DROP_HANDLER_CLSID: Lazy<Guid> =
+    Lazy::new(|| Guid::from_str("81521ebe-a2d4-450b-9bf8-5c23ed8730d0").unwrap());
 
 #[derive(Clone)]
 pub struct ExtConfig {
@@ -86,7 +93,7 @@ impl Default for HoldMode {
 /// GUID of the WSL distribution.
 #[derive(Clone, Eq)]
 pub struct DistroGUID {
-    guid: GUID,
+    guid: Guid,
     /// Pinned wide c-string of the GUID for win32 usage. Enclosed in `{`...`}`.
     wcs: Pin<WideCString>,
 }
@@ -99,7 +106,7 @@ impl DistroGUID {
 }
 
 impl std::ops::Deref for DistroGUID {
-    type Target = GUID;
+    type Target = Guid;
     fn deref(&self) -> &Self::Target {
         &self.guid
     }
@@ -113,10 +120,10 @@ impl std::fmt::Display for DistroGUID {
 }
 
 impl FromStr for DistroGUID {
-    type Err = guid_create::ParseError;
+    type Err = ();
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        let guid = GUID::parse(s.trim_start_matches('{').trim_end_matches('}'))?;
-        let s = format!("{{{}}}", guid.to_string().to_ascii_lowercase());
+        let guid = Guid::from_str(s).map_err(|_| ())?;
+        let s = guid.to_string().to_ascii_lowercase();
         let wcs = unsafe { WideCString::from_str_unchecked(s) };
         Ok(Self {
             guid,
@@ -133,10 +140,7 @@ impl std::cmp::PartialEq for DistroGUID {
 
 impl std::hash::Hash for DistroGUID {
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
-        self.data1().hash(state);
-        self.data2().hash(state);
-        self.data3().hash(state);
-        self.data4().hash(state);
+        self.guid.hash(state);
     }
 }
 
@@ -190,6 +194,7 @@ pub fn register_extension(config: &ExtConfig) -> Result<(), Error> {
     if ext.is_empty() {
         return Err(Error::from(ErrorKind::LogicError { s: "No extension." }));
     }
+    register_server()?;
     let tx = Transaction::new().map_err(|e| ErrorKind::RegistryError { e })?;
     let base = RegKey::predef(HKEY_CURRENT_USER)
         .open_subkey_transacted_with_flags(CLASSES_SUBKEY, &tx, KEY_ALL_ACCESS)
@@ -248,7 +253,7 @@ pub fn register_extension(config: &ExtConfig) -> Result<(), Error> {
     let path = format!(r"{}\shellex\DropHandler", name);
     // {60254CA5-953B-11CF-8C96-00AA00B8708C} (WSH DropHandler)
     // {86C86720-42A0-1069-A2E8-08002B30309D} (EXE DropHandler)
-    let value = "{86C86720-42A0-1069-A2E8-08002B30309D}";
+    let value = DROP_HANDLER_CLSID.to_string();
     set_value(&tx, &base, &path, "", &value)?;
     // Software\Classes\.ext - Register handler for extension
     let path = format!(".{}", ext);
@@ -258,10 +263,34 @@ pub fn register_extension(config: &ExtConfig) -> Result<(), Error> {
     let path = format!(r".{}\OpenWithProgIds", ext);
     set_value(&tx, &base, &path, &name, &"")?;
     tx.commit().map_err(|e| ErrorKind::RegistryError { e })?;
-    // TODO: call SHChangeNotify() with SHCNE_ASSOCCHANGED
-    // See: https://docs.microsoft.com/en-us/windows/win32/shell/fa-file-types
-    // See: https://docs.microsoft.com/en-us/windows/win32/api/shlobj_core/nf-shlobj_core-shchangenotify
+    notify_shell_change();
     Ok(())
+}
+
+extern "system" {
+    fn SHChangeNotify(
+        weventid: winnt::LONG,
+        uflags: minwindef::UINT,
+        dwitem1: minwindef::LPCVOID,
+        dwitem2: minwindef::LPCVOID,
+    );
+}
+
+/// Notify the system that file associations have been changed.
+///
+/// See: https://docs.microsoft.com/en-us/windows/win32/shell/fa-file-types
+/// See: https://docs.microsoft.com/en-us/windows/win32/api/shlobj_core/nf-shlobj_core-shchangenotify
+fn notify_shell_change() {
+    const SHCNE_ASSOCCHANGED: winnt::LONG = 0x08000000;
+    const SHCNF_IDLIST: minwindef::UINT = 0;
+    unsafe {
+        SHChangeNotify(
+            SHCNE_ASSOCCHANGED,
+            SHCNF_IDLIST,
+            std::ptr::null(),
+            std::ptr::null(),
+        )
+    };
 }
 
 /// Get the wslscript command for filetype registry.
@@ -352,6 +381,12 @@ pub fn unregister_extension(ext: &str) -> Result<(), Error> {
         }
     }
     tx.commit().map_err(|e| ErrorKind::RegistryError { e })?;
+    // if there's no registered extensions, unregister shell extension
+    if let Ok(exts) = query_registered_extensions() {
+        if exts.is_empty() {
+            remove_server_from_registry()?;
+        }
+    }
     Ok(())
 }
 
@@ -504,4 +539,63 @@ pub fn is_registered_for_current_executable(ext: &str) -> Result<bool, Error> {
         return Ok(true);
     }
     Ok(false)
+}
+
+/// Call DllRegisterServer from shell extension handler library.
+fn register_server() -> Result<(), Error> {
+    use libloading::{Library, Symbol};
+    let lib = unsafe { Library::new("wslscript_handler.dll") }.map_err(|e| {
+        Error::from(ErrorKind::LibraryError {
+            s: format!("{}", e),
+        })
+    })?;
+    let dll_register_server: Symbol<unsafe extern "C" fn() -> i32> =
+        unsafe { lib.get(b"DllRegisterServer\0") }.map_err(|e| {
+            Error::from(ErrorKind::LibraryError {
+                s: format!("{}", e),
+            })
+        })?;
+    let rv = unsafe { dll_register_server() };
+    if rv != winerror::S_OK {
+        log::debug!("DllRegisterServer returned {}", rv);
+        return Err(Error::from(ErrorKind::GenericError {
+            s: "Failed to register shell extension.".to_string(),
+        }));
+    }
+    Ok(())
+}
+
+/// Register in-process server for drop handler shell extension.
+///
+/// See: https://docs.microsoft.com/en-us/windows/win32/com/inprocserver32
+pub fn add_server_to_registry(dll_path: &Path) -> Result<(), Error> {
+    let tx = Transaction::new().map_err(|e| ErrorKind::RegistryError { e })?;
+    let base = RegKey::predef(HKEY_CURRENT_USER)
+        .open_subkey_transacted_with_flags(CLASSES_SUBKEY, &tx, KEY_ALL_ACCESS)
+        .map_err(|e| ErrorKind::RegistryError { e })?;
+    let clsid = format!(r"CLSID\{}", DROP_HANDLER_CLSID.to_string());
+    set_value(&tx, &base, &clsid, "", &"WSLScript Drop Handler")?;
+    let path = format!(r"{}\InProcServer32", clsid);
+    let val = dll_path.to_string_lossy().to_string();
+    set_value(&tx, &base, &path, "", &val)?;
+    set_value(&tx, &base, &path, "ThreadingModel", &"Apartment")?;
+    tx.commit().map_err(|e| ErrorKind::RegistryError { e })?;
+    Ok(())
+}
+
+/// Remove registry keys related to drop handler shell extension.
+pub fn remove_server_from_registry() -> Result<(), Error> {
+    let tx = Transaction::new().map_err(|e| ErrorKind::RegistryError { e })?;
+    let base = RegKey::predef(HKEY_CURRENT_USER)
+        .open_subkey_transacted_with_flags(CLASSES_SUBKEY, &tx, KEY_ALL_ACCESS)
+        .map_err(|e| ErrorKind::RegistryError { e })?;
+    let clsid = format!(r"CLSID\{}", DROP_HANDLER_CLSID.to_string());
+    if let Ok(key) = base.open_subkey_transacted_with_flags(&clsid, &tx, KEY_ALL_ACCESS) {
+        key.delete_subkey_all("")
+            .map_err(|e| ErrorKind::RegistryError { e })?;
+        base.delete_subkey_transacted(&clsid, &tx)
+            .map_err(|e| ErrorKind::RegistryError { e })?;
+    }
+    tx.commit().map_err(|e| ErrorKind::RegistryError { e })?;
+    Ok(())
 }

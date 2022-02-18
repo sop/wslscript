@@ -1,12 +1,2 @@
 [workspace]
 members = ["wslscript", "wslscript_handler", "wslscript_common"]
-
-[profile.release]
-lto = "fat"
-codegen-units = 1
-panic = "abort"
-
-[profile.release.package.wslscript]
-opt-level = 3
-debug = false
-debug-assertions = false
