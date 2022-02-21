@@ -19,6 +19,7 @@ struct CargoPackage {
 }
 
 fn main() {
+    println!("cargo:rerun-if-changed=../wslscript/Cargo.toml");
     let handler_cargo = handler_cargo();
     let wslscript_cargo = wslscript_cargo();
     let manifest_path = PathBuf::from(env::var("OUT_DIR").unwrap()).join("manifest.xml");
@@ -47,14 +48,39 @@ fn main() {
         .unwrap();
 }
 
+/// Parse version string to resource version.
+///
+/// See: https://docs.microsoft.com/en-us/windows/win32/menurc/versioninfo-resource
 fn parse_version(s: &str) -> u64 {
+    // take first 3 numbers
     let mut parts = s
         .split(".")
-        .map(|s| s.parse::<u16>().unwrap())
+        .filter_map(|s| {
+            s.chars()
+                .take_while(|c| c.is_digit(10))
+                .collect::<String>()
+                .parse::<u16>()
+                .ok()
+        })
+        .take(3)
         .collect::<Vec<_>>();
+    // insert 0 as a fourth component
     parts.push(0);
     assert!(parts.len() == 4);
     (parts[0] as u64) << 48 | (parts[1] as u64) << 32 | (parts[2] as u64) << 16 | (parts[3] as u64)
+}
+
+/// Format resource version to _m.n.o.p_ string.
+///
+/// See: https://docs.microsoft.com/en-us/windows/win32/sbscs/assembly-versions
+fn format_version(v: u64) -> String {
+    format!(
+        "{}.{}.{}.{}",
+        (v >> 48) & 0xffff,
+        (v >> 32) & 0xffff,
+        (v >> 16) & 0xffff,
+        v & 0xffff
+    )
 }
 
 fn get_manifest(handler_cargo: &Cargo, wslscript_cargo: &Cargo) -> String {
@@ -69,7 +95,7 @@ fn get_manifest(handler_cargo: &Cargo, wslscript_cargo: &Cargo) -> String {
 </assembly>"#,
         name = format!("github.sop.{}", handler_cargo.package.name),
         description = handler_cargo.package.description,
-        version = format!("{}.0", wslscript_cargo.package.version)
+        version = format_version(parse_version(&wslscript_cargo.package.version))
     )
 }
 
