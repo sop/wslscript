@@ -28,7 +28,9 @@ Note that Drag & Drop handler may not work until reboot.
 
 ## TODO
 
-- [ ] Optionally register for all users
+-   [ ] Path conversion progress indicator when large amount of files is
+        dragged and dropped
+-   [ ] Optionally register for all users
 
 ## License
 
