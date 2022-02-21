@@ -1,6 +1,7 @@
 use crate::font::Font;
 use num_derive::{FromPrimitive, ToPrimitive};
 use num_traits::{FromPrimitive, ToPrimitive};
+use once_cell::sync::Lazy;
 use std::mem::{size_of, zeroed};
 use std::pin::Pin;
 use std::ptr::null_mut;
@@ -21,6 +22,9 @@ use wslscript_common::icon::ShellIcon;
 use wslscript_common::registry;
 use wslscript_common::win32;
 use wslscript_common::{wcstr, wcstring};
+
+/// Default extension to register.
+const DEFAULT_EXTENSION: Lazy<WideCString> = Lazy::new(|| wcstring("sh"));
 
 extern "system" {
     /// PickIconDlg() prototype.
@@ -266,7 +270,7 @@ impl MainWindow {
             .unwrap_or_default()
             .is_empty()
         {
-            unsafe { SetWindowTextW(hwnd, wchz!("sh").as_ptr()) };
+            unsafe { SetWindowTextW(hwnd, DEFAULT_EXTENSION.as_ptr()) };
         }
 
         self.lv_extensions = ExtensionsListView::create(self);
@@ -681,13 +685,7 @@ impl MainWindow {
         };
         registry::register_extension(&config)?;
         // clear extension input
-        unsafe {
-            SetDlgItemTextW(
-                self.hwnd,
-                Control::EditExtension.to_i32().unwrap(),
-                wchz!("").as_ptr(),
-            )
-        };
+        self.set_extension_input_text(wcstr(wchz!("")));
         let idx = self.lv_extensions.find_ext(&ext).or_else(|| {
             // insert to listview
             if let Some(item) = self.lv_extensions.insert_item(0, &wcstring(&ext)) {
@@ -739,6 +737,15 @@ impl MainWindow {
                 unsafe { SendMessageW(hwnd, cc::LVM_DELETEITEM, idx, 0) };
                 self.set_current_extension(None);
                 self.update_control_states();
+                // if there's no more registered extensions, and if extension
+                // input was empty, reset to default extension
+                if registry::query_registered_extensions()
+                    .unwrap_or_default()
+                    .is_empty()
+                    && self.get_extension_input_text().is_empty()
+                {
+                    self.set_extension_input_text(&DEFAULT_EXTENSION);
+                }
             }
             MenuItem::EditExtension => {
                 let idx: usize = self.get_menu_data(hmenu);
@@ -854,6 +861,16 @@ impl MainWindow {
             buf.set_len(len as usize);
         }
         WideCString::from_vec(buf).unwrap().to_string_lossy()
+    }
+
+    fn set_extension_input_text(&self, text: &WideCStr) {
+        unsafe {
+            SetDlgItemTextW(
+                self.hwnd,
+                Control::EditExtension.to_i32().unwrap(),
+                text.as_ptr(),
+            );
+        }
     }
 
     /// Set extension that is currently selected for edit.

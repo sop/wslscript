@@ -25,6 +25,7 @@ const LXSS_SUBKEY: &str = r"Software\Microsoft\Windows\CurrentVersion\Lxss";
 pub static DROP_HANDLER_CLSID: Lazy<Guid> =
     Lazy::new(|| Guid::from_str("81521ebe-a2d4-450b-9bf8-5c23ed8730d0").unwrap());
 
+/// Configuration for registered file name extension.
 #[derive(Clone)]
 pub struct ExtConfig {
     /// Filetype extension without leading dot.
@@ -42,9 +43,12 @@ pub struct ExtConfig {
 /// Terminal window hold mode after script exits.
 #[derive(Clone, Copy, PartialEq)]
 pub enum HoldMode {
-    Never,  // always close terminal window on exit
-    Always, // always wait for keypress on exit
-    Error,  // wait for keypress when exit code != 0
+    /// Always close terminal window on exit.
+    Never,
+    /// Always wait for keypress on exit.
+    Always,
+    /// Wait for keypress when exit code != 0.
+    Error,
 }
 
 impl HoldMode {
@@ -267,59 +271,6 @@ pub fn register_extension(config: &ExtConfig) -> Result<(), Error> {
     Ok(())
 }
 
-extern "system" {
-    fn SHChangeNotify(
-        weventid: winnt::LONG,
-        uflags: minwindef::UINT,
-        dwitem1: minwindef::LPCVOID,
-        dwitem2: minwindef::LPCVOID,
-    );
-}
-
-/// Notify the system that file associations have been changed.
-///
-/// See: https://docs.microsoft.com/en-us/windows/win32/shell/fa-file-types
-/// See: https://docs.microsoft.com/en-us/windows/win32/api/shlobj_core/nf-shlobj_core-shchangenotify
-fn notify_shell_change() {
-    const SHCNE_ASSOCCHANGED: winnt::LONG = 0x08000000;
-    const SHCNF_IDLIST: minwindef::UINT = 0;
-    unsafe {
-        SHChangeNotify(
-            SHCNE_ASSOCCHANGED,
-            SHCNF_IDLIST,
-            std::ptr::null(),
-            std::ptr::null(),
-        )
-    };
-}
-
-/// Get the wslscript command for filetype registry.
-fn get_command(config: &ExtConfig) -> Result<WideString, Error> {
-    let exe = WinPathBuf::new(std::env::current_exe()?)
-        .canonicalize()?
-        .without_extended();
-    let mut cmd = WideString::new();
-    cmd.push(exe.quoted());
-    cmd.push_slice(wch!(r#" --ext ""#));
-    cmd.push_str(&config.extension);
-    cmd.push_slice(wch!(r#"""#));
-    cmd.push_slice(wch!(r#" -E "%0" %*"#));
-    Ok(cmd)
-}
-
-/// Set registry value.
-fn set_value<T: winreg::types::ToRegValue>(
-    tx: &Transaction,
-    base: &RegKey,
-    path: &str,
-    name: &str,
-    value: &T,
-) -> Result<(), Error> {
-    base.create_subkey_transacted(path, tx)
-        .and_then(|(key, _)| key.set_value(name, value))
-        .map_err(|e| Error::from(ErrorKind::RegistryError { e }))
-}
-
 /// Unregister extension.
 pub fn unregister_extension(ext: &str) -> Result<(), Error> {
     let tx = Transaction::new().map_err(|e| ErrorKind::RegistryError { e })?;
@@ -387,7 +338,61 @@ pub fn unregister_extension(ext: &str) -> Result<(), Error> {
             remove_server_from_registry()?;
         }
     }
+    notify_shell_change();
     Ok(())
+}
+
+extern "system" {
+    fn SHChangeNotify(
+        weventid: winnt::LONG,
+        uflags: minwindef::UINT,
+        dwitem1: minwindef::LPCVOID,
+        dwitem2: minwindef::LPCVOID,
+    );
+}
+
+/// Notify the system that file associations have been changed.
+///
+/// See: https://docs.microsoft.com/en-us/windows/win32/shell/fa-file-types
+/// See: https://docs.microsoft.com/en-us/windows/win32/api/shlobj_core/nf-shlobj_core-shchangenotify
+fn notify_shell_change() {
+    const SHCNE_ASSOCCHANGED: winnt::LONG = 0x08000000;
+    const SHCNF_IDLIST: minwindef::UINT = 0;
+    unsafe {
+        SHChangeNotify(
+            SHCNE_ASSOCCHANGED,
+            SHCNF_IDLIST,
+            std::ptr::null(),
+            std::ptr::null(),
+        )
+    };
+}
+
+/// Get the wslscript command for filetype registry.
+fn get_command(config: &ExtConfig) -> Result<WideString, Error> {
+    let exe = WinPathBuf::new(std::env::current_exe()?)
+        .canonicalize()?
+        .without_extended();
+    let mut cmd = WideString::new();
+    cmd.push(exe.quoted());
+    cmd.push_slice(wch!(r#" --ext ""#));
+    cmd.push_str(&config.extension);
+    cmd.push_slice(wch!(r#"""#));
+    cmd.push_slice(wch!(r#" -E "%0" %*"#));
+    Ok(cmd)
+}
+
+/// Set registry value.
+fn set_value<T: winreg::types::ToRegValue>(
+    tx: &Transaction,
+    base: &RegKey,
+    path: &str,
+    name: &str,
+    value: &T,
+) -> Result<(), Error> {
+    base.create_subkey_transacted(path, tx)
+        .and_then(|(key, _)| key.set_value(name, value))
+        .map_err(|e| Error::from(ErrorKind::RegistryError { e }))
 }
 
 /// Query list of registered extensions.
