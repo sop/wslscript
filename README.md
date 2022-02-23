@@ -28,7 +28,6 @@ Note that Drag & Drop handler may not work until reboot.
 
 ## TODO
 
--   [ ] Possibility to cancel while converting paths
 -   [ ] Optionally register for all users
 
 ## License
