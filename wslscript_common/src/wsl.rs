@@ -17,6 +17,12 @@ use winapi::um::winbase;
 /// Maximum command line length on Windows.
 const MAX_CMD_LEN: usize = 8191;
 
+/// Maximum number of paths to convert per single bash invocation.
+#[cfg(not(feature = "debug"))]
+const MAX_PATHS_CONVERT_PER_PROCESS: usize = 100;
+#[cfg(feature = "debug")]
+const MAX_PATHS_CONVERT_PER_PROCESS: usize = 1;
+
 /// Run script with optional arguments in a WSL.
 ///
 /// Paths must be in WSL context.
@@ -208,7 +214,7 @@ fn single_quote_escape(s: &OsStr) -> OsString {
 
 /// Convert single Windows path to WSL equivalent.
 fn path_to_wsl(path: &Path, opts: &WSLOptions) -> Result<PathBuf, Error> {
-    let mut paths = paths_to_wsl(&[path.to_owned()], opts)?;
+    let mut paths = paths_to_wsl(&[path.to_owned()], opts, None)?;
     let p = paths
         .pop()
         .ok_or_else(|| Error::from(ErrorKind::WinToUnixPathError))?;
@@ -219,19 +225,31 @@ fn path_to_wsl(path: &Path, opts: &WSLOptions) -> Result<PathBuf, Error> {
 ///
 /// Multiple paths can be converted on a single WSL invocation.
 /// Converted paths are returned in the same order as given.
-pub fn paths_to_wsl(paths: &[PathBuf], opts: &WSLOptions) -> Result<Vec<PathBuf>, Error> {
+///
+/// Optional progress callback function shall be called with a number of
+/// paths converted so far.
+pub fn paths_to_wsl(
+    paths: &[PathBuf],
+    opts: &WSLOptions,
+    progress_callback: Option<Box<dyn Fn(usize) + 'static>>,
+) -> Result<Vec<PathBuf>, Error> {
     let mut wsl_paths: Vec<PathBuf> = Vec::with_capacity(paths.len());
     let mut path_idx = 0;
     while path_idx < paths.len() {
         // build a printf command that prints null separated results
         let mut printf = WideString::new();
         printf.push_slice(wch!(r"printf '%s\0'"));
+        let mut n = 0;
         // convert multiple paths on single WSL invocation up to maximum command line length
-        while path_idx < paths.len() && printf.len() < MAX_CMD_LEN - MAX_PATH - 100 {
+        while path_idx < paths.len()
+            && printf.len() < MAX_CMD_LEN - MAX_PATH - 100
+            && n < MAX_PATHS_CONVERT_PER_PROCESS
+        {
             printf.push_slice(wch!(r#" "$(wslpath -u '"#));
             printf.push_os_str(single_quote_escape(paths[path_idx].as_os_str()));
             printf.push_slice(wch!(r#"')""#));
             path_idx += 1;
+            n += 1;
         }
         log::debug!("printf command length {}", printf.len());
         let mut cmd = process::Command::new(wsl_bin_path()?);
@@ -256,7 +274,10 @@ pub fn paths_to_wsl(paths: &[PathBuf], opts: &WSLOptions) -> Result<Vec<PathBuf>
                 .trim_matches('\0')
                 .split('\0')
                 .map(PathBuf::from),
-        )
+        );
+        if let Some(cb) = &progress_callback {
+            cb(path_idx);
+        }
     }
     log::debug!("Converted {} Windows paths to WSL", wsl_paths.len());
     Ok(wsl_paths)

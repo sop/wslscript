@@ -92,6 +92,16 @@ fn get_manifest(handler_cargo: &Cargo, wslscript_cargo: &Cargo) -> String {
         name="{name}"
         type="win32" />
     <description>{description}</description>
+    <dependency>
+        <dependentAssembly>
+            <assemblyIdentity type="win32"
+                name="Microsoft.Windows.Common-Controls"
+                version="6.0.0.0"
+                processorArchitecture="*"
+                publicKeyToken="6595b64144ccf1df"
+                language="*" />
+        </dependentAssembly>
+    </dependency>
 </assembly>"#,
         name = format!("github.sop.{}", handler_cargo.package.name),
         description = handler_cargo.package.description,

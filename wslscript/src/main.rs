@@ -7,7 +7,6 @@ use wchar::*;
 use wslscript_common::error::*;
 use wslscript_common::wsl;
 
-mod font;
 mod gui;
 
 fn main() {
@@ -92,6 +91,6 @@ fn execute_wsl(args: Vec<OsString>, opts: wsl::WSLOptions) -> Result<(), Error> 
         }
     }
     // convert paths to WSL equivalents
-    let wsl_paths = wsl::paths_to_wsl(&paths, &opts)?;
+    let wsl_paths = wsl::paths_to_wsl(&paths, &opts, None)?;
     wsl::run_wsl(&wsl_paths[0], &wsl_paths[1..], &opts)
 }

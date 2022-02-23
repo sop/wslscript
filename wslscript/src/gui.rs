@@ -1,4 +1,3 @@
-use crate::font::Font;
 use num_derive::{FromPrimitive, ToPrimitive};
 use num_traits::{FromPrimitive, ToPrimitive};
 use once_cell::sync::Lazy;
@@ -18,13 +17,14 @@ use winapi::um::libloaderapi::GetModuleHandleW;
 use winapi::um::wingdi;
 use winapi::um::winuser::*;
 use wslscript_common::error::*;
+use wslscript_common::font::Font;
 use wslscript_common::icon::ShellIcon;
 use wslscript_common::registry;
 use wslscript_common::win32;
 use wslscript_common::{wcstr, wcstring};
 
 /// Default extension to register.
-const DEFAULT_EXTENSION: Lazy<WideCString> = Lazy::new(|| wcstring("sh"));
+static DEFAULT_EXTENSION: Lazy<WideCString> = Lazy::new(|| wcstring("sh"));
 
 extern "system" {
     /// PickIconDlg() prototype.

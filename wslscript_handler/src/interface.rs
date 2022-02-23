@@ -24,6 +24,8 @@ use winapi::um::winuser;
 use wslscript_common::error::*;
 use wslscript_common::wcstring;
 
+use crate::progress::ProgressWindow;
+
 /// IClassFactory GUID.
 ///
 /// See: https://docs.microsoft.com/en-us/windows/win32/api/unknwn/nn-unknwn-iclassfactory
@@ -83,11 +85,12 @@ extern "system" fn DllMain(
             log::debug!("DLL_PROCESS_ATTACH");
             return win::TRUE;
         }
-        winnt::DLL_PROCESS_DETACH => {}
-        winnt::DLL_THREAD_ATTACH => {}
-        winnt::DLL_THREAD_DETACH => {
-            log::debug!("DLL_THREAD_DETACH");
+        winnt::DLL_PROCESS_DETACH => {
+            log::debug!("DLL_PROCESS_DETACH");
+            ProgressWindow::unregister_window_class();
         }
+        winnt::DLL_THREAD_ATTACH => {}
+        winnt::DLL_THREAD_DETACH => {}
         _ => {}
     }
     win::FALSE

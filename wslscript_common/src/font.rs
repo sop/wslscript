@@ -1,14 +1,23 @@
-use std::mem::{size_of, zeroed};
-use std::ptr::null_mut;
-use winapi::shared::minwindef;
+use crate::error::*;
+use crate::win32;
+use std::mem;
+use std::ptr;
+use winapi::shared::minwindef as win;
 use winapi::shared::windef;
 use winapi::um::wingdi;
 use winapi::um::winuser;
-use wslscript_common::error::*;
-use wslscript_common::win32;
 
+/// Logical font.
 pub struct Font {
     pub handle: windef::HFONT,
+}
+
+impl Default for Font {
+    fn default() -> Self {
+        Self {
+            handle: ptr::null_mut(),
+        }
+    }
 }
 
 impl Font {
@@ -16,15 +25,19 @@ impl Font {
         Font::new_caption(0)
     }
 
+    /// Get default caption font with given size.
+    ///
+    /// See: https://docs.microsoft.com/en-us/windows/win32/api/wingdi/ns-wingdi-logfonta
     pub fn new_caption(size: i32) -> Result<Self, Error> {
-        let mut metrics = winuser::NONCLIENTMETRICSW {
-            cbSize: size_of::<winuser::NONCLIENTMETRICSW>() as u32,
-            ..unsafe { zeroed() }
+        use winuser::*;
+        let mut metrics = NONCLIENTMETRICSW {
+            cbSize: mem::size_of::<NONCLIENTMETRICSW>() as u32,
+            ..unsafe { mem::zeroed() }
         };
-        if minwindef::FALSE
+        if win::FALSE
             == unsafe {
-                winuser::SystemParametersInfoW(
-                    winuser::SPI_GETNONCLIENTMETRICS,
+                SystemParametersInfoW(
+                    SPI_GETNONCLIENTMETRICS,
                     metrics.cbSize,
                     &mut metrics as *mut _ as *mut _,
                     0,
@@ -48,13 +61,7 @@ impl Font {
 impl Drop for Font {
     fn drop(&mut self) {
         if !self.handle.is_null() {
-            unsafe { wingdi::DeleteObject(self.handle as windef::HGDIOBJ) };
+            unsafe { wingdi::DeleteObject(self.handle as _) };
         }
-    }
-}
-
-impl Default for Font {
-    fn default() -> Self {
-        Self { handle: null_mut() }
     }
 }

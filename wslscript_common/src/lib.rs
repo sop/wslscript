@@ -2,6 +2,7 @@
 extern crate failure;
 
 pub mod error;
+pub mod font;
 pub mod icon;
 pub mod registry;
 pub mod win32;
