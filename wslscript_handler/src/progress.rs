@@ -1,5 +1,6 @@
 use num_enum::IntoPrimitive;
 use once_cell::sync::Lazy;
+use std::sync::mpsc::Sender;
 use std::{mem, pin::Pin, ptr};
 use wchar::*;
 use widestring::*;
@@ -17,8 +18,10 @@ use wslscript_common::wcstring;
 use wslscript_common::win32;
 
 pub struct ProgressWindow {
-    /// maximum value for progress.
+    /// Maximum value for progress.
     high_limit: usize,
+    /// Sender to signal for cancellation.
+    cancel_sender: Option<Sender<()>>,
     /// Window handle.
     hwnd: HWND,
     /// Default font.
@@ -29,6 +32,7 @@ impl Default for ProgressWindow {
     fn default() -> Self {
         Self {
             high_limit: 0,
+            cancel_sender: None,
             hwnd: ptr::null_mut(),
             font: Font::default(),
         }
@@ -41,6 +45,7 @@ static WND_CLASS: Lazy<WideCString> = Lazy::new(|| wcstring("WSLScriptProgress")
 /// Window message for progress update.
 pub const WM_PROGRESS: win::UINT = winuser::WM_USER + 1;
 
+/// Child window identifiers.
 #[derive(IntoPrimitive, PartialEq)]
 #[repr(u16)]
 enum Control {
@@ -53,7 +58,7 @@ enum Control {
 const MIN_WINDOW_SIZE: (i32, i32) = (300, 150);
 
 impl ProgressWindow {
-    pub fn new(high_limit: usize) -> Result<Pin<Box<Self>>, Error> {
+    pub fn new(high_limit: usize, cancel_sender: Sender<()>) -> Result<Pin<Box<Self>>, Error> {
         use winuser::*;
         // register window class
         if !Self::is_window_class_registered() {
@@ -61,6 +66,7 @@ impl ProgressWindow {
         }
         let mut wnd = Pin::new(Box::new(Self::default()));
         wnd.high_limit = high_limit;
+        wnd.cancel_sender = Some(cancel_sender);
         let instance = unsafe { libloaderapi::GetModuleHandleW(ptr::null_mut()) };
         let title = wchz!("WSL Script");
         // create window
@@ -79,10 +85,12 @@ impl ProgressWindow {
         Ok(wnd)
     }
 
+    /// Get handle to main window.
     pub fn handle(&self) -> HWND {
         self.hwnd
     }
 
+    /// Run message loop.
     pub fn run(&self) -> Result<(), Error> {
         log::debug!("Starting message loop");
         loop {
@@ -101,10 +109,21 @@ impl ProgressWindow {
         }
     }
 
+    /// Signal that progress should be cancelled.
+    pub fn cancel(&self) {
+        if let Some(tx) = &self.cancel_sender {
+            tx.send(()).unwrap_or_else(|_| {
+                log::error!("Failed to send cancel signal");
+            });
+        }
+    }
+
+    /// Close main window.
     pub fn close(&self) {
         unsafe { winuser::PostMessageW(self.hwnd, winuser::WM_CLOSE, 0, 0) };
     }
 
+    /// Create child control windows.
     fn create_window_controls(&mut self) -> Result<(), Error> {
         use winuser::*;
         let instance = unsafe { GetWindowLongPtrW(self.hwnd, GWLP_HINSTANCE) as win::HINSTANCE };
@@ -147,21 +166,25 @@ impl ProgressWindow {
         Ok(())
     }
 
+    /// Called when client was resized.
     fn on_resize(&self, width: i32, _height: i32) {
         self.move_control(Control::Title, 10, 10, width - 20, 20);
         self.move_control(Control::ProgressBar, 10, 40, width - 20, 30);
         self.move_control(Control::Message, 10, 80, width - 20, 20);
     }
 
+    /// Move control relative to main window.
     fn move_control(&self, control: Control, x: i32, y: i32, width: i32, height: i32) {
         let hwnd = self.get_control_handle(control);
         unsafe { winuser::MoveWindow(hwnd, x, y, width, height, win::TRUE) };
     }
 
+    /// Get window handle of given control.
     fn get_control_handle(&self, control: Control) -> HWND {
         unsafe { winuser::GetDlgItem(self.hwnd, control as i32) }
     }
 
+    /// Set font to given window.
     fn set_window_font(hwnd: HWND, font: &Font) {
         unsafe {
             winuser::SendMessageW(hwnd, winuser::WM_SETFONT, font.handle as _, win::TRUE as _)
@@ -169,7 +192,7 @@ impl ProgressWindow {
     }
 
     /// Update controls to display given progress.
-    fn update_progress(&self, current: usize, max: usize) {
+    fn update_progress(&mut self, current: usize, max: usize) {
         use commctrl::*;
         use winuser::*;
         log::debug!("Progress update: {}/{}", current, max);
@@ -185,6 +208,10 @@ impl ProgressWindow {
         }
         let hwnd = self.get_control_handle(Control::ProgressBar);
         unsafe { SendMessageW(hwnd, PBM_SETPOS, current, 0) };
+        // if done, close cancellation channel
+        if current == max {
+            self.cancel_sender.take();
+        }
     }
 
     /// Check whether progress bar is in marquee mode.
@@ -212,6 +239,7 @@ impl ProgressWindow {
 }
 
 impl ProgressWindow {
+    /// Check whether window class is registered.
     pub fn is_window_class_registered() -> bool {
         unsafe {
             let instance = libloaderapi::GetModuleHandleW(ptr::null_mut());
@@ -220,6 +248,7 @@ impl ProgressWindow {
         }
     }
 
+    /// Register window class.
     pub fn register_window_class() -> Result<(), Error> {
         use winuser::*;
         log::debug!("Registering {} window class", WND_CLASS.to_string_lossy());
@@ -242,6 +271,7 @@ impl ProgressWindow {
         }
     }
 
+    /// Unregister window class.
     pub fn unregister_window_class() {
         log::debug!("Unregistering {} window class", WND_CLASS.to_string_lossy());
         unsafe {
@@ -264,26 +294,26 @@ trait WindowProc {
     ) -> Option<win::LRESULT>;
 }
 
+/// Window proc wrapper that manages the `&self` pointer to `ProgressWindow` object.
+///
+/// Must be `extern "system"` because the function is called by Windows.
 extern "system" fn window_proc_wrapper<T: WindowProc>(
     hwnd: HWND,
     msg: win::UINT,
     wparam: win::WPARAM,
     lparam: win::LPARAM,
 ) -> win::LRESULT {
+    use winuser::*;
     // get pointer to T from userdata
-    let mut ptr = unsafe { winuser::GetWindowLongPtrW(hwnd, winuser::GWLP_USERDATA) } as *mut T;
+    let mut ptr = unsafe { GetWindowLongPtrW(hwnd, GWLP_USERDATA) } as *mut T;
     // not yet set, initialize from CREATESTRUCT
-    if ptr.is_null() && msg == winuser::WM_NCCREATE {
-        let cs = unsafe { &*(lparam as winuser::LPCREATESTRUCTW) };
+    if ptr.is_null() && msg == WM_NCCREATE {
+        let cs = unsafe { &*(lparam as LPCREATESTRUCTW) };
         ptr = cs.lpCreateParams as *mut T;
         log::debug!("Initialize window pointer {:p}", ptr);
         unsafe { errhandlingapi::SetLastError(0) };
         if 0 == unsafe {
-            winuser::SetWindowLongPtrW(
-                hwnd,
-                winuser::GWLP_USERDATA,
-                ptr as *const _ as basetsd::LONG_PTR,
-            )
+            SetWindowLongPtrW(hwnd, GWLP_USERDATA, ptr as *const _ as basetsd::LONG_PTR)
         } && unsafe { errhandlingapi::GetLastError() } != 0
         {
             return win::FALSE as win::LRESULT;
@@ -296,7 +326,7 @@ extern "system" fn window_proc_wrapper<T: WindowProc>(
             return result;
         }
     }
-    unsafe { winuser::DefWindowProcW(hwnd, msg, wparam, lparam) }
+    unsafe { DefWindowProcW(hwnd, msg, wparam, lparam) }
 }
 
 impl WindowProc for ProgressWindow {
@@ -345,6 +375,7 @@ impl WindowProc for ProgressWindow {
             }
             // https://docs.microsoft.com/en-us/windows/win32/winmsg/wm-close
             WM_CLOSE => {
+                self.cancel();
                 unsafe { DestroyWindow(hwnd) };
                 Some(0)
             }

@@ -10,7 +10,6 @@ use std::cell::RefCell;
 use std::path::PathBuf;
 use std::str::FromStr;
 use std::sync::atomic::{AtomicUsize, Ordering};
-use wchar::*;
 use widestring::WideCStr;
 use winapi::shared::guiddef;
 use winapi::shared::minwindef as win;
@@ -22,7 +21,6 @@ use winapi::um::oleidl;
 use winapi::um::winnt;
 use winapi::um::winuser;
 use wslscript_common::error::*;
-use wslscript_common::wcstring;
 
 use crate::progress::ProgressWindow;
 
@@ -69,14 +67,14 @@ extern "system" fn DllMain(
                 if simple_logging::log_to_file(&path, log::LevelFilter::Debug).is_err() {
                     unsafe {
                         use winapi::um::winuser::*;
-                        let text = wcstring(format!(
+                        let text = wslscript_common::wcstring(format!(
                             "Failed to set up logging to {}",
                             path.to_string_lossy()
                         ));
                         MessageBoxW(
                             std::ptr::null_mut(),
                             text.as_ptr(),
-                            wchz!("Error").as_ptr(),
+                            wchar::wchz!("Error").as_ptr(),
                             MB_OK | MB_ICONERROR | MB_SERVICE_NOTIFICATION,
                         );
                     }

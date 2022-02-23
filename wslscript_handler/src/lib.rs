@@ -90,12 +90,15 @@ fn convert_paths_with_progress(
     let path_count = win_paths.len();
     // channel to transfer current progress as in number of paths converted
     let (tx_progress, rx_progress) = mpsc::channel::<usize>();
+    // channel to signal cancellation
+    let (tx_cancel, rx_cancel) = mpsc::channel::<()>();
+    // wait for progress updates in a seperate thread
     let progress_joiner = thread::spawn(move || {
         // channel to transfer progress window handle to this thread
         let (tx_hwnd, rx_hwnd) = mpsc::channel::<ProgressWindowHandle>();
         // run window in a seperate thread
         let window_joiner = thread::spawn(move || {
-            let wnd = match ProgressWindow::new(path_count) {
+            let wnd = match ProgressWindow::new(path_count, tx_cancel) {
                 Ok(wnd) => wnd,
                 Err(e) => {
                     log::error!("Failed to create progress window: {}", e);
@@ -127,7 +130,7 @@ fn convert_paths_with_progress(
         drop(rx_hwnd);
         // post progress to window
         let update_progress = |n: usize| {
-            log::debug!("Update: {} paths converted", n);
+            // post WM_PROGRESS message to window's queue
             unsafe { winuser::PostMessageW(hwnd, progress::WM_PROGRESS, n, path_count as _) };
         };
         // blocking receive progress updates
@@ -146,27 +149,28 @@ fn convert_paths_with_progress(
         });
     });
     // convert paths and send progress via channel
-    let wsl_paths = wsl::paths_to_wsl(
+    let result = wsl::paths_to_wsl(
         &win_paths,
         &opts,
         Some(Box::new(move |count| {
+            // if conversion was cancelled
+            if rx_cancel.try_recv().is_ok() {
+                return false;
+            }
             tx_progress.send(count).unwrap_or_else(|_| {
                 log::error!("Failed to communicate with channel");
             });
             // artificial delay while developing
             #[cfg(feature = "debug")]
             std::thread::sleep(std::time::Duration::from_secs(1));
+            true
         })),
-    )?;
+    );
     // wait for progress thread to finish
     progress_joiner.join().unwrap_or_else(|_| {
         log::error!("Path conversion progress thread panicked");
     });
-    log::debug!(
-        "Progress thread joined, converted {} paths",
-        wsl_paths.len()
-    );
-    Ok(wsl_paths)
+    result
 }
 
 /// Get WSL options from registry based on given filename's extension.

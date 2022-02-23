@@ -221,6 +221,12 @@ fn path_to_wsl(path: &Path, opts: &WSLOptions) -> Result<PathBuf, Error> {
     Ok(p)
 }
 
+/// Path conversion progress callback.
+///
+/// Callback must return true to continue processing.
+/// Conversion may be cancelled by returning false.
+pub type PathProgressCallback = Box<dyn Fn(usize) -> bool + 'static>;
+
 /// Convert Windows paths to WSL equivalents.
 ///
 /// Multiple paths can be converted on a single WSL invocation.
@@ -231,7 +237,7 @@ fn path_to_wsl(path: &Path, opts: &WSLOptions) -> Result<PathBuf, Error> {
 pub fn paths_to_wsl(
     paths: &[PathBuf],
     opts: &WSLOptions,
-    progress_callback: Option<Box<dyn Fn(usize) + 'static>>,
+    progress_callback: Option<PathProgressCallback>,
 ) -> Result<Vec<PathBuf>, Error> {
     let mut wsl_paths: Vec<PathBuf> = Vec::with_capacity(paths.len());
     let mut path_idx = 0;
@@ -276,7 +282,10 @@ pub fn paths_to_wsl(
                 .map(PathBuf::from),
         );
         if let Some(cb) = &progress_callback {
-            cb(path_idx);
+            if !cb(path_idx) {
+                log::debug!("Progress callback returned false, cancelling");
+                return Err(Error::from(ErrorKind::Cancel));
+            }
         }
     }
     log::debug!("Converted {} Windows paths to WSL", wsl_paths.len());

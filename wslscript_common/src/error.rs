@@ -24,6 +24,9 @@ pub enum ErrorKind {
     #[fail(display = "String is not nul terminated.")]
     MissingNulError,
 
+    #[fail(display = "Operation was cancelled.")]
+    Cancel,
+
     #[fail(display = "Registry error: {}", e)]
     RegistryError { e: std::io::Error },
 
