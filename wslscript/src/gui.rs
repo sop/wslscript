@@ -1,5 +1,4 @@
-use num_derive::{FromPrimitive, ToPrimitive};
-use num_traits::{FromPrimitive, ToPrimitive};
+use num_enum::{IntoPrimitive, TryFromPrimitive};
 use once_cell::sync::Lazy;
 use std::mem::{size_of, zeroed};
 use std::pin::Pin;
@@ -39,7 +38,6 @@ extern "system" {
 }
 
 /// Start WSL Script GUI app.
-///
 pub fn start_gui() -> Result<(), Error> {
     let wnd = MainWindow::new(wcstr(wchz!("WSL Script")))?;
     wnd.run()
@@ -109,6 +107,7 @@ struct MainWindow {
     /// Message to display on GUI.
     message: Option<String>,
 }
+
 impl Default for MainWindow {
     fn default() -> Self {
         Self {
@@ -124,9 +123,9 @@ impl Default for MainWindow {
     }
 }
 
-// TODO: change to `num_enum` crate
 /// Window control ID's.
-#[derive(FromPrimitive, ToPrimitive, PartialEq)]
+#[derive(IntoPrimitive, TryFromPrimitive, PartialEq)]
+#[repr(u16)]
 enum Control {
     StaticMsg = 100,     // message area
     RegisterLabel,       // label for extension input
@@ -144,7 +143,9 @@ enum Control {
     BtnSave,             // Save button
 }
 
-#[derive(FromPrimitive, ToPrimitive, PartialEq)]
+/// Menu item ID's.
+#[derive(IntoPrimitive, TryFromPrimitive, PartialEq)]
+#[repr(u32)]
 enum MenuItem {
     Unregister = 100,
     EditExtension,
@@ -223,7 +224,7 @@ impl MainWindow {
             0, wchz!("STATIC").as_ptr(), null_mut(),
             SS_CENTER | WS_CHILD | WS_VISIBLE,
             0, 0, 0, 0, self.hwnd,
-            Control::StaticMsg.to_u16().unwrap() as HMENU, instance, null_mut(),
+            Control::StaticMsg as u16 as _, instance, null_mut(),
         ) };
         set_window_font(hwnd, &self.caption_font);
 
@@ -233,7 +234,7 @@ impl MainWindow {
             0, wchz!("BUTTON").as_ptr(), wchz!("Register").as_ptr(),
             WS_TABSTOP | WS_VISIBLE | WS_CHILD | BS_DEFPUSHBUTTON,
             0, 0, 0, 0, self.hwnd,
-            Control::BtnRegister.to_u16().unwrap() as HMENU, instance, null_mut()
+            Control::BtnRegister as u16 as _, instance, null_mut()
         ) };
         set_window_font(hwnd, &self.caption_font);
 
@@ -243,7 +244,7 @@ impl MainWindow {
             0, wchz!("STATIC").as_ptr(), wchz!("Extension:").as_ptr(),
             SS_CENTERIMAGE | SS_RIGHT | WS_CHILD | WS_VISIBLE,
             0, 0, 0, 0, self.hwnd,
-            Control::RegisterLabel.to_u16().unwrap() as HMENU, instance, null_mut(),
+            Control::RegisterLabel as u16 as _, instance, null_mut(),
         ) };
         set_window_font(hwnd, &self.caption_font);
 
@@ -253,7 +254,7 @@ impl MainWindow {
             0, wchz!("EDIT").as_ptr(), null_mut(),
             ES_LEFT | ES_LOWERCASE | WS_CHILD | WS_VISIBLE | WS_BORDER,
             0, 0, 0, 0, self.hwnd,
-            Control::EditExtension.to_u16().unwrap() as HMENU, instance, null_mut(),
+            Control::EditExtension as u16 as _, instance, null_mut(),
         ) };
         set_window_font(hwnd, &self.caption_font);
         let self_ptr = self as *const _;
@@ -282,7 +283,7 @@ impl MainWindow {
             0, wchz!("STATIC").as_ptr(), null_mut(),
             SS_ICON | SS_CENTERIMAGE | SS_NOTIFY | WS_CHILD | WS_VISIBLE,
             0, 0, 0, 0, self.hwnd,
-            Control::StaticIcon.to_u16().unwrap() as HMENU, instance, null_mut(),
+            Control::StaticIcon as u16 as _, instance, null_mut(),
         ) };
 
         // icon tooltip
@@ -297,7 +298,7 @@ impl MainWindow {
             0, wchz!("STATIC").as_ptr(), wchz!("Icon").as_ptr(),
             SS_CENTER | WS_CHILD | WS_VISIBLE,
             0, 0, 0, 0, self.hwnd,
-            Control::IconLabel.to_u16().unwrap() as HMENU, instance, null_mut()
+            Control::IconLabel as u16 as _, instance, null_mut()
         ) };
         set_window_font(hwnd, &self.caption_font);
 
@@ -307,7 +308,7 @@ impl MainWindow {
             0, wchz!("COMBOBOX").as_ptr(), null_mut(),
             CBS_DROPDOWNLIST | WS_VSCROLL | WS_CHILD | WS_VISIBLE,
             0, 0, 0, 0, self.hwnd,
-            Control::HoldModeCombo.to_u16().unwrap() as HMENU, instance, null_mut()
+            Control::HoldModeCombo as u16 as _, instance, null_mut()
         ) };
         set_window_font(hwnd, &self.caption_font);
         let insert_item = |mode: registry::HoldMode, label: &[wchar_t]| {
@@ -332,7 +333,7 @@ impl MainWindow {
             0, wchz!("STATIC").as_ptr(), wchz!("Exit behaviour").as_ptr(),
             SS_CENTER | WS_CHILD | WS_VISIBLE,
             0, 0, 0, 0, self.hwnd,
-            Control::HoldModeLabel.to_u16().unwrap() as HMENU, instance, null_mut()
+            Control::HoldModeLabel as u16 as _, instance, null_mut()
         ) };
         set_window_font(hwnd, &self.caption_font);
 
@@ -348,7 +349,7 @@ impl MainWindow {
             0, wchz!("BUTTON").as_ptr(), null_mut(),
             WS_TABSTOP | WS_VISIBLE | WS_CHILD | BS_AUTOCHECKBOX,
             0, 0, 0, 0, self.hwnd,
-            Control::InteractiveCheckbox.to_u16().unwrap() as HMENU, instance, null_mut()
+            Control::InteractiveCheckbox as u16 as _, instance, null_mut()
         ) };
 
         // interactive shell label
@@ -357,7 +358,7 @@ impl MainWindow {
             0, wchz!("STATIC").as_ptr(), wchz!("Interactive").as_ptr(),
             SS_LEFT | SS_CENTERIMAGE | SS_NOTIFY | WS_CHILD | WS_VISIBLE,
             0, 0, 0, 0, self.hwnd,
-            Control::InteractiveLabel.to_u16().unwrap() as HMENU, instance, null_mut()
+            Control::InteractiveLabel as u16 as _, instance, null_mut()
         ) };
         set_window_font(hwnd, &self.caption_font);
 
@@ -376,7 +377,7 @@ impl MainWindow {
             0, wchz!("COMBOBOX").as_ptr(), null_mut(),
             CBS_DROPDOWNLIST | WS_VSCROLL | WS_CHILD | WS_VISIBLE,
             0, 0, 0, 0, self.hwnd,
-            Control::DistroCombo.to_u16().unwrap() as HMENU, instance, null_mut()
+            Control::DistroCombo as u16 as _, instance, null_mut()
         ) };
         set_window_font(hwnd, &self.caption_font);
         let insert_item = |guid: Option<&registry::DistroGUID>, name: &str| {
@@ -411,7 +412,7 @@ impl MainWindow {
             0, wchz!("STATIC").as_ptr(), wchz!("Distribution").as_ptr(),
             SS_CENTER | WS_CHILD | WS_VISIBLE,
             0, 0, 0, 0, self.hwnd,
-            Control::DistroLabel.to_u16().unwrap() as HMENU, instance, null_mut()
+            Control::DistroLabel as u16 as _, instance, null_mut()
         ) };
         set_window_font(hwnd, &self.caption_font);
 
@@ -427,7 +428,7 @@ impl MainWindow {
             0, wchz!("BUTTON").as_ptr(), wchz!("Save").as_ptr(),
             WS_TABSTOP | WS_VISIBLE | WS_CHILD | BS_DEFPUSHBUTTON,
             0, 0, 0, 0, self.hwnd,
-            Control::BtnSave.to_u16().unwrap() as HMENU, instance, null_mut()
+            Control::BtnSave as u16 as _, instance, null_mut()
         ) };
         set_window_font(hwnd, &self.caption_font);
         self.update_control_states();
@@ -820,10 +821,10 @@ impl MainWindow {
                         fType: MFT_STRING,
                         ..unsafe { zeroed() }
                     };
-                    mii.wID = MenuItem::EditExtension.to_u32().unwrap();
+                    mii.wID = MenuItem::EditExtension as _;
                     mii.dwTypeData = wchz!("Edit").as_ptr() as _;
                     unsafe { InsertMenuItemW(hmenu, 0, win::TRUE, &mii) };
-                    mii.wID = MenuItem::Unregister.to_u32().unwrap();
+                    mii.wID = MenuItem::Unregister as _;
                     mii.dwTypeData = wchz!("Unregister").as_ptr() as _;
                     unsafe { InsertMenuItemW(hmenu, 1, win::TRUE, &mii) };
                     let mut pos: POINT = nmia.ptAction;
@@ -847,7 +848,7 @@ impl MainWindow {
     /// Get window handle to control.
     ///
     fn get_control_handle(&self, control: Control) -> HWND {
-        unsafe { GetDlgItem(self.hwnd, control.to_i32().unwrap()) }
+        unsafe { GetDlgItem(self.hwnd, control as _) }
     }
 
     /// Get text from extension text input.
@@ -857,7 +858,7 @@ impl MainWindow {
         unsafe {
             let len = GetDlgItemTextW(
                 self.hwnd,
-                Control::EditExtension.to_i32().unwrap(),
+                Control::EditExtension as _,
                 buf.as_mut_ptr(),
                 buf.capacity() as i32,
             );
@@ -868,11 +869,7 @@ impl MainWindow {
 
     fn set_extension_input_text(&self, text: &WideCStr) {
         unsafe {
-            SetDlgItemTextW(
-                self.hwnd,
-                Control::EditExtension.to_i32().unwrap(),
-                text.as_ptr(),
-            );
+            SetDlgItemTextW(self.hwnd, Control::EditExtension as _, text.as_ptr());
         }
     }
 
@@ -1028,7 +1025,7 @@ impl ExtensionsListView {
             wcstring(cc::WC_LISTVIEW).as_ptr(), null_mut(),
             WS_CHILD | WS_VISIBLE | WS_BORDER | cc::LVS_REPORT | cc::LVS_SINGLESEL | cc::LVS_SHOWSELALWAYS,
             0, 0, 0, 0, main.hwnd,
-            Control::ListViewExtensions.to_u16().unwrap() as HMENU,
+            Control::ListViewExtensions as u16 as _,
             GetModuleHandleW(null_mut()), null_mut(),
         ) };
         let lv = Self { hwnd };
@@ -1193,8 +1190,8 @@ impl WindowProc for MainWindow {
             WM_COMMAND => {
                 // if lParam is non-zero, message is from a control
                 if lparam != 0 {
-                    if let Some(id) = FromPrimitive::from_u16(LOWORD(wparam as u32)) {
-                        match self.on_control(lparam as HWND, id, HIWORD(wparam as u32)) {
+                    if let Ok(id) = Control::try_from(LOWORD(wparam as _)) {
+                        match self.on_control(lparam as HWND, id, HIWORD(wparam as _)) {
                             Err(e) => {
                                 win32::error_message(&e.to_wide());
                                 return Some(0);
@@ -1205,7 +1202,7 @@ impl WindowProc for MainWindow {
                 }
                 // if lParam is zero and HIWORD of wParam is zero, message is from a menu
                 else if HIWORD(wparam as u32) == 0 {
-                    if let Some(id) = FromPrimitive::from_u16(LOWORD(wparam as u32)) {
+                    if let Ok(id) = MenuItem::try_from(wparam as u32) {
                         return Some(self.on_menucommand(null_mut(), id));
                     }
                 }
@@ -1214,14 +1211,14 @@ impl WindowProc for MainWindow {
             WM_MENUCOMMAND => {
                 let hmenu = lparam as HMENU;
                 let item_id = unsafe { GetMenuItemID(hmenu, wparam as i32) };
-                if let Some(id) = FromPrimitive::from_u32(item_id) {
+                if let Ok(id) = MenuItem::try_from(item_id) {
                     return Some(self.on_menucommand(hmenu, id));
                 }
                 None
             }
             WM_NOTIFY => {
                 let hdr = unsafe { &*(lparam as LPNMHDR) };
-                if let Some(id) = FromPrimitive::from_usize(hdr.idFrom) {
+                if let Ok(id) = Control::try_from(hdr.idFrom as u16) {
                     return Some(self.on_notify(hdr.hwndFrom, id, hdr.code, lparam as *const _));
                 }
                 None
