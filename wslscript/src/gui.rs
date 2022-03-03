@@ -124,6 +124,7 @@ impl Default for MainWindow {
     }
 }
 
+// TODO: change to `num_enum` crate
 /// Window control ID's.
 #[derive(FromPrimitive, ToPrimitive, PartialEq)]
 enum Control {
@@ -283,6 +284,12 @@ impl MainWindow {
             0, 0, 0, 0, self.hwnd,
             Control::StaticIcon.to_u16().unwrap() as HMENU, instance, null_mut(),
         ) };
+
+        // icon tooltip
+        self.create_control_tooltip(
+            Control::StaticIcon,
+            wcstr(wchz!("Double click to select an icon for the extension.")),
+        );
 
         // icon label
         #[rustfmt::skip]
@@ -486,48 +493,34 @@ impl MainWindow {
             unsafe { SetWindowTextW(hwnd, s.as_ptr()) };
             set_window_font(hwnd, &self.caption_font);
         };
-        let visibility = if self.current_ext_cfg.is_some() {
-            SW_SHOW
-        } else {
-            SW_HIDE
-        };
+        let visible = self.current_ext_cfg.is_some();
         // hold mode label
-        unsafe { ShowWindow(self.get_control_handle(Control::HoldModeLabel), visibility) };
+        self.set_control_visibility(Control::HoldModeLabel, visible);
         // hold mode combo
-        unsafe { ShowWindow(self.get_control_handle(Control::HoldModeCombo), visibility) };
+        self.set_control_visibility(Control::HoldModeCombo, visible);
         if let Some(mode) = self.current_ext_cfg.as_ref().map(|cfg| cfg.hold_mode) {
             self.set_selected_hold_mode(mode);
         }
         // interactive shell label
-        unsafe {
-            ShowWindow(
-                self.get_control_handle(Control::InteractiveLabel),
-                visibility,
-            )
-        };
+        self.set_control_visibility(Control::InteractiveLabel, visible);
         // interactive shell checkbox
-        unsafe {
-            ShowWindow(
-                self.get_control_handle(Control::InteractiveCheckbox),
-                visibility,
-            )
-        };
+        self.set_control_visibility(Control::InteractiveCheckbox, visible);
         // set button state
         if let Some(state) = self.current_ext_cfg.as_ref().map(|cfg| cfg.interactive) {
             self.set_interactive_state(state);
         }
         // distro label
-        unsafe { ShowWindow(self.get_control_handle(Control::DistroLabel), visibility) };
+        self.set_control_visibility(Control::DistroLabel, visible);
         // distro combo
-        unsafe { ShowWindow(self.get_control_handle(Control::DistroCombo), visibility) };
+        self.set_control_visibility(Control::DistroCombo, visible);
         self.set_selected_distro(
             self.current_ext_cfg
                 .as_ref()
                 .and_then(|cfg| cfg.distro.as_ref()),
         );
         // set icon
+        self.set_control_visibility(Control::StaticIcon, visible);
         let hwnd = self.get_control_handle(Control::StaticIcon);
-        unsafe { ShowWindow(hwnd, visibility) };
         if let Some(icon) = self
             .current_ext_cfg
             .as_ref()
@@ -535,12 +528,22 @@ impl MainWindow {
         {
             unsafe { SendMessageW(hwnd, STM_SETICON, icon.handle() as WPARAM, 0) };
         } else {
-            unsafe { SendMessageW(hwnd, STM_SETICON, 0, 0) };
+            // NOTE: DestroyIcon not needed for shared icon
+            let hicon = unsafe { LoadIconW(null_mut(), IDI_WARNING) };
+            unsafe { SendMessageW(hwnd, STM_SETICON, hicon as _, 0) };
         }
         // icon label
-        unsafe { ShowWindow(self.get_control_handle(Control::IconLabel), visibility) };
+        self.set_control_visibility(Control::IconLabel, visible);
         // save button
-        unsafe { ShowWindow(self.get_control_handle(Control::BtnSave), visibility) };
+        self.set_control_visibility(Control::BtnSave, visible);
+    }
+
+    /// Set control visibility.
+    fn set_control_visibility(&self, control: Control, visible: bool) {
+        let visibility = if visible { SW_SHOW } else { SW_HIDE };
+        unsafe {
+            ShowWindow(self.get_control_handle(control), visibility);
+        }
     }
 
     /// Handle WM_SIZE message.
@@ -1008,6 +1011,7 @@ fn set_window_font(hwnd: HWND, font: &Font) {
     unsafe { SendMessageW(hwnd, WM_SETFONT, font.handle as WPARAM, win::TRUE as LPARAM) };
 }
 
+// TODO: split to module
 struct ExtensionsListView {
     hwnd: HWND,
 }
