@@ -31,7 +31,7 @@ impl Font {
     pub fn new_caption(size: i32) -> Result<Self, Error> {
         use winuser::*;
         let mut metrics = NONCLIENTMETRICSW {
-            cbSize: mem::size_of::<NONCLIENTMETRICSW>() as u32,
+            cbSize: mem::size_of::<NONCLIENTMETRICSW>() as _,
             ..unsafe { mem::zeroed() }
         };
         if win::FALSE

@@ -5,7 +5,7 @@ use std::path::PathBuf;
 use std::ptr::null_mut;
 use wchar::*;
 use widestring::*;
-use winapi::shared::minwindef::*;
+use winapi::shared::minwindef as win;
 use winapi::um::winnt;
 
 /// Convert &str to WideCString
@@ -64,7 +64,7 @@ pub fn last_error() -> Error {
                 | FORMAT_MESSAGE_ALLOCATE_BUFFER,
             null_mut(),
             errno,
-            DWORD::from(winnt::MAKELANGID(
+            win::DWORD::from(winnt::MAKELANGID(
                 winnt::LANG_NEUTRAL,
                 winnt::SUBLANG_DEFAULT,
             )),
@@ -127,29 +127,21 @@ impl WinPathBuf {
 
     /// Expand environment variables in a path.
     pub fn expand(&self) -> Result<Self, Error> {
+        use winapi::um::fileapi::*;
+        use winapi::um::processenv::*;
         let mut buf = [0_u16; 2048];
         let len = unsafe {
-            winapi::um::processenv::ExpandEnvironmentStringsW(
-                self.to_wide().as_ptr(),
-                buf.as_mut_ptr(),
-                buf.len() as DWORD,
-            )
+            ExpandEnvironmentStringsW(self.to_wide().as_ptr(), buf.as_mut_ptr(), buf.len() as _)
         };
         if len == 0 {
             return Err(last_error());
         }
-        let path = unsafe { WideCString::from_ptr_unchecked(buf.as_ptr(), len as usize) };
-        let len = unsafe {
-            winapi::um::fileapi::GetLongPathNameW(
-                path.as_ptr(),
-                buf.as_mut_ptr(),
-                buf.len() as DWORD,
-            )
-        };
+        let path = unsafe { WideCString::from_ptr_unchecked(buf.as_ptr(), len as _) };
+        let len = unsafe { GetLongPathNameW(path.as_ptr(), buf.as_mut_ptr(), buf.len() as _) };
         if len == 0 {
             return Err(last_error());
         }
-        let path = unsafe { WideCString::from_ptr_unchecked(buf.as_ptr(), (len + 1) as usize) };
+        let path = unsafe { WideCString::from_ptr_unchecked(buf.as_ptr(), (len + 1) as _) };
         Ok(Self::from(path.as_ucstr()))
     }
 }

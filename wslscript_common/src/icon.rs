@@ -4,19 +4,22 @@ use std::ptr::null_mut;
 use std::str::FromStr;
 use wchar::*;
 use widestring::*;
-use winapi::shared::windef::*;
+use winapi::shared::windef;
 use winapi::um::libloaderapi;
 use winapi::um::shellapi;
-use winapi::um::winuser::*;
+use winapi::um::winuser;
 
 /// The Old New Thing - How the shell converts an icon location into an icon
 /// https://devblogs.microsoft.com/oldnewthing/20100505-00/?p=14153
 
 #[derive(Clone)]
 pub struct ShellIcon {
-    handle: HICON,    // handle to loaded icon
-    path: WinPathBuf, // path to file containing icon
-    index: u32,       // icon index in a file
+    /// Handle to loaded icon.
+    handle: windef::HICON,
+    /// Path to file containing icon.
+    path: WinPathBuf,
+    /// Icon index in a file.
+    index: u32,
 }
 
 impl ShellIcon {
@@ -63,7 +66,7 @@ impl ShellIcon {
         Self::load(WinPathBuf::from(ws), 0)
     }
 
-    pub fn handle(&self) -> HICON {
+    pub fn handle(&self) -> windef::HICON {
         self.handle
     }
 
@@ -84,7 +87,7 @@ impl ShellIcon {
 
 impl Drop for ShellIcon {
     fn drop(&mut self) {
-        unsafe { DestroyIcon(self.handle) };
+        unsafe { winuser::DestroyIcon(self.handle) };
     }
 }
 
