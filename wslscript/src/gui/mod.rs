@@ -27,18 +27,6 @@ mod listview;
 /// Default extension to register.
 static DEFAULT_EXTENSION: Lazy<WideCString> = Lazy::new(|| wcstring("sh"));
 
-extern "system" {
-    /// PickIconDlg() prototype.
-    ///
-    /// https://docs.microsoft.com/en-us/windows/win32/api/shlobj_core/nf-shlobj_core-pickicondlg
-    pub fn PickIconDlg(
-        hwnd: windef::HWND,
-        pszIconPath: ntdef::PWSTR,
-        cchIconPath: win::UINT,
-        piIconIndex: *mut std::os::raw::c_int,
-    ) -> std::os::raw::c_int;
-}
-
 /// Start WSL Script GUI app.
 pub fn start_gui() -> Result<(), Error> {
     let mut title = "WSL Script".to_string();
@@ -81,16 +69,15 @@ extern "system" fn window_proc_wrapper<T: WindowProc>(
         let cs = unsafe { &*(lparam as LPCREATESTRUCTW) };
         ptr = cs.lpCreateParams as *mut T;
         unsafe { errhandlingapi::SetLastError(0) };
-        if 0 == unsafe {
-            SetWindowLongPtrW(hwnd, GWLP_USERDATA, ptr as *const _ as basetsd::LONG_PTR)
-        } && unsafe { errhandlingapi::GetLastError() } != 0
+        if 0 == unsafe { SetWindowLongPtrW(hwnd, GWLP_USERDATA, ptr as *const _ as _) }
+            && unsafe { errhandlingapi::GetLastError() } != 0
         {
             return win::FALSE as _;
         }
     }
     // call wrapped window proc
     if !ptr.is_null() {
-        let this = unsafe { &mut *(ptr as *mut T) };
+        let this = unsafe { &mut *ptr };
         if let Some(result) = this.window_proc(hwnd, msg, wparam, lparam) {
             return result;
         }
@@ -98,6 +85,7 @@ extern "system" fn window_proc_wrapper<T: WindowProc>(
     unsafe { DefWindowProcW(hwnd, msg, wparam, lparam) }
 }
 
+/// Main window.
 pub(crate) struct MainWindow {
     /// Main window handle.
     hwnd: windef::HWND,
@@ -136,27 +124,43 @@ impl Default for MainWindow {
 #[derive(IntoPrimitive, TryFromPrimitive, PartialEq)]
 #[repr(u16)]
 pub(crate) enum Control {
-    StaticMsg = 100,     // message area
-    RegisterLabel,       // label for extension input
-    EditExtension,       // input for extension
-    BtnRegister,         // register button
-    ListViewExtensions,  // listview of registered extensions
-    StaticIcon,          // icon for extension
-    IconLabel,           // label for icon
-    HoldModeCombo,       // combo box for hold mode
-    HoldModeLabel,       // label for hold mode
-    InteractiveCheckbox, // label for interactive shell checkbox
-    InteractiveLabel,    // checkbox for interactive shell
-    DistroCombo,         // combo box for distro
-    DistroLabel,         // label for distro
-    BtnSave,             // Save button
+    /// Message area.
+    StaticMsg = 100,
+    /// Label for extension input.
+    RegisterLabel,
+    /// Input for extension.
+    EditExtension,
+    /// Register button.
+    BtnRegister,
+    /// Listview of registered extensions.
+    ListViewExtensions,
+    /// Icon for extension.
+    StaticIcon,
+    /// Label for icon.
+    IconLabel,
+    /// Combo box for hold mode.
+    HoldModeCombo,
+    /// Label for hold mode.
+    HoldModeLabel,
+    /// Checkbox for interactive shell.
+    InteractiveCheckbox,
+    /// Label for interactive shell checkbox.
+    InteractiveLabel,
+    /// Combo box for distro.
+    DistroCombo,
+    /// Label for distro.
+    DistroLabel,
+    /// Save button.
+    BtnSave,
 }
 
 /// Menu item ID's.
 #[derive(IntoPrimitive, TryFromPrimitive, PartialEq)]
 #[repr(u32)]
 enum MenuItem {
+    /// Unregister extension.
     Unregister = 100,
+    /// Edit extension.
     EditExtension,
 }
 
@@ -171,7 +175,7 @@ impl MainWindow {
         let class_name = wchz!("WSLScript");
         // register window class
         let wc = WNDCLASSEXW {
-            cbSize: mem::size_of::<WNDCLASSEXW>() as u32,
+            cbSize: mem::size_of::<WNDCLASSEXW>() as _,
             style: CS_OWNDC | CS_HREDRAW | CS_VREDRAW,
             hbrBackground: (COLOR_WINDOW + 1) as _,
             lpfnWndProc: Some(window_proc_wrapper::<MainWindow>),
@@ -219,7 +223,7 @@ impl MainWindow {
         self.ext_font = Font::new_caption(24)?;
         // init common controls
         let icex = commctrl::INITCOMMONCONTROLSEX {
-            dwSize: mem::size_of::<commctrl::INITCOMMONCONTROLSEX>() as u32,
+            dwSize: mem::size_of::<commctrl::INITCOMMONCONTROLSEX>() as _,
             dwICC: commctrl::ICC_LISTVIEW_CLASSES,
         };
         unsafe { commctrl::InitCommonControlsEx(&icex) };
@@ -265,14 +269,7 @@ impl MainWindow {
         set_window_font(hwnd, &self.caption_font);
         let self_ptr = self as *const _;
         // use custom window proc
-        unsafe {
-            commctrl::SetWindowSubclass(
-                hwnd,
-                Some(extension_input_proc),
-                0,
-                self_ptr as basetsd::DWORD_PTR,
-            )
-        };
+        unsafe { commctrl::SetWindowSubclass(hwnd, Some(extension_input_proc), 0, self_ptr as _) };
         // if no extensions are registered, set default value to input box
         if registry::query_registered_extensions()
             .unwrap_or_default()
@@ -281,6 +278,7 @@ impl MainWindow {
             unsafe { SetWindowTextW(hwnd, DEFAULT_EXTENSION.as_ptr()) };
         }
 
+        // extensions listview
         self.lv_extensions = listview::ExtensionsListView::create(self);
 
         // extension icon
@@ -426,6 +424,7 @@ impl MainWindow {
             Control::BtnSave as u16 as _, instance, ptr::null_mut()
         ) };
         set_window_font(hwnd, &self.caption_font);
+
         self.update_control_states();
         Ok(())
     }
@@ -442,11 +441,11 @@ impl MainWindow {
             ptr::null_mut(), instance, ptr::null_mut()
         ) };
         let ti = TOOLINFOW {
-            cbSize: mem::size_of::<TOOLINFOW>() as u32,
+            cbSize: mem::size_of::<TOOLINFOW>() as _,
             hwnd: self.hwnd,
             uFlags: TTF_IDISHWND | TTF_SUBCLASS,
-            uId: self.get_control_handle(control) as basetsd::UINT_PTR,
-            lpszText: text.as_ptr() as ntdef::LPWSTR,
+            uId: self.get_control_handle(control) as _,
+            lpszText: text.as_ptr() as _,
             ..unsafe { mem::zeroed() }
         };
         unsafe { SendMessageW(hwnd_tt, TTM_ADDTOOLW, 0, &ti as *const _ as _) };
@@ -523,7 +522,7 @@ impl MainWindow {
         {
             unsafe { SendMessageW(hwnd, STM_SETICON, icon.handle() as _, 0) };
         } else {
-            // NOTE: DestroyIcon not needed for shared icon
+            // NOTE: DestroyIcon not needed for shared icons
             let hicon = unsafe { LoadIconW(ptr::null_mut(), IDI_WARNING) };
             unsafe { SendMessageW(hwnd, STM_SETICON, hicon as _, 0) };
         }
@@ -720,7 +719,7 @@ impl MainWindow {
     fn on_menucommand(&mut self, hmenu: windef::HMENU, item_id: MenuItem) -> win::LRESULT {
         match item_id {
             MenuItem::Unregister => {
-                let idx: usize = self.get_menu_data(hmenu);
+                let idx = Self::get_menu_data::<usize>(hmenu);
                 if let Some(ext) = self.lv_extensions.get_item_text(idx) {
                     if let Err(e) = registry::unregister_extension(&ext) {
                         let s = wcstring(format!("Failed to unregister extension: {}", e));
@@ -742,7 +741,7 @@ impl MainWindow {
                 }
             }
             MenuItem::EditExtension => {
-                let idx: usize = self.get_menu_data(hmenu);
+                let idx = Self::get_menu_data::<usize>(hmenu);
                 self.set_current_extension(Some(idx));
                 self.update_control_states();
             }
@@ -751,7 +750,7 @@ impl MainWindow {
     }
 
     /// Get application-defined value associated with a menu.
-    fn get_menu_data<T>(&self, hmenu: windef::HMENU) -> T
+    fn get_menu_data<T>(hmenu: windef::HMENU) -> T
     where
         T: From<winapi::shared::basetsd::ULONG_PTR>,
     {
@@ -798,7 +797,7 @@ impl MainWindow {
                     }
                     let hmenu = unsafe { CreatePopupMenu() };
                     let mi = MENUINFO {
-                        cbSize: mem::size_of::<MENUINFO>() as u32,
+                        cbSize: mem::size_of::<MENUINFO>() as _,
                         fMask: MIM_MENUDATA | MIM_STYLE,
                         dwStyle: MNS_NOTIFYBYPOS,
                         dwMenuData: nmia.iItem as usize,
@@ -806,7 +805,7 @@ impl MainWindow {
                     };
                     unsafe { SetMenuInfo(hmenu, &mi) };
                     let mut mii = MENUITEMINFOW {
-                        cbSize: mem::size_of::<MENUITEMINFOW>() as u32,
+                        cbSize: mem::size_of::<MENUITEMINFOW>() as _,
                         fMask: MIIM_TYPE | MIIM_ID,
                         fType: MFT_STRING,
                         ..unsafe { mem::zeroed() }
@@ -843,17 +842,19 @@ impl MainWindow {
     fn get_extension_input_text(&self) -> String {
         let mut buf: Vec<ntdef::WCHAR> = Vec::with_capacity(32);
         unsafe {
+            // NOTE: if text is longer than buffer, it's truncated
             let len = GetDlgItemTextW(
                 self.hwnd,
                 Control::EditExtension as _,
                 buf.as_mut_ptr(),
-                buf.capacity() as i32,
+                buf.capacity() as _,
             );
             buf.set_len(len as usize);
         }
         WideCString::from_vec(buf).unwrap().to_string_lossy()
     }
 
+    /// Set text to extension input control.
     fn set_extension_input_text(&self, text: &WideCStr) {
         unsafe {
             SetDlgItemTextW(self.hwnd, Control::EditExtension as _, text.as_ptr());
@@ -890,8 +891,7 @@ impl MainWindow {
                 idx = si.index() as i32;
             }
         }
-        let result =
-            unsafe { PickIconDlg(self.hwnd, buf.as_mut_ptr(), buf.len() as u32, &mut idx) };
+        let result = unsafe { PickIconDlg(self.hwnd, buf.as_mut_ptr(), buf.len() as _, &mut idx) };
         if result == 0 {
             return None;
         }
@@ -915,6 +915,7 @@ impl MainWindow {
         }
     }
 
+    /// Get currently select hold mode.
     fn get_selected_hold_mode(&self) -> Option<registry::HoldMode> {
         let hwnd = self.get_control_handle(Control::HoldModeCombo);
         let idx = unsafe { SendMessageW(hwnd, CB_GETCURSEL, 0, 0) };
@@ -923,6 +924,7 @@ impl MainWindow {
         registry::HoldMode::from_wcstr(cs)
     }
 
+    /// Set hold mode to control.
     fn set_selected_hold_mode(&self, mode: registry::HoldMode) -> Option<usize> {
         let hwnd = self.get_control_handle(Control::HoldModeCombo);
         let count = unsafe { SendMessageW(hwnd, CB_GETCOUNT, 0, 0) as usize };
@@ -941,13 +943,13 @@ impl MainWindow {
 
     /// Get the interactive shell checkbox state.
     fn get_interactive_state(&self) -> bool {
-        let result = unsafe { IsDlgButtonChecked(self.hwnd, Control::InteractiveCheckbox as i32) };
+        let result = unsafe { IsDlgButtonChecked(self.hwnd, Control::InteractiveCheckbox as _) };
         result == 1
     }
 
     /// Set the interactive shell checkbox state.
     fn set_interactive_state(&self, state: bool) {
-        unsafe { CheckDlgButton(self.hwnd, Control::InteractiveCheckbox as i32, state as u32) };
+        unsafe { CheckDlgButton(self.hwnd, Control::InteractiveCheckbox as _, state as _) };
     }
 
     /// Set selected distro in combo box.
@@ -1018,8 +1020,8 @@ impl WindowProc for MainWindow {
             }
             WM_SIZE => {
                 self.on_resize(
-                    i32::from(win::LOWORD(lparam as u32)),
-                    i32::from(win::HIWORD(lparam as u32)),
+                    i32::from(win::LOWORD(lparam as _)),
+                    i32::from(win::HIWORD(lparam as _)),
                 );
                 Some(0)
             }
@@ -1053,7 +1055,7 @@ impl WindowProc for MainWindow {
             }
             WM_MENUCOMMAND => {
                 let hmenu = lparam as windef::HMENU;
-                let item_id = unsafe { GetMenuItemID(hmenu, wparam as i32) };
+                let item_id = unsafe { GetMenuItemID(hmenu, wparam as _) };
                 if let Ok(id) = MenuItem::try_from(item_id) {
                     return Some(self.on_menucommand(hmenu, id));
                 }
@@ -1106,7 +1108,7 @@ extern "system" fn extension_input_proc(
                 return 0;
             }
             _ => {
-                if let Some(ch) = std::char::from_u32(wparam as u32) {
+                if let Some(ch) = std::char::from_u32(wparam as _) {
                     match ch {
                         // illegal filename characters
                         '<' | '>' | ':' | '"' | '/' | '\\' | '|' | '?' | '*' => return 0,
@@ -1122,4 +1124,14 @@ extern "system" fn extension_input_proc(
         _ => {}
     }
     unsafe { commctrl::DefSubclassProc(hwnd, msg, wparam, lparam) }
+}
+
+extern "system" {
+    /// https://docs.microsoft.com/en-us/windows/win32/api/shlobj_core/nf-shlobj_core-pickicondlg
+    pub fn PickIconDlg(
+        hwnd: windef::HWND,
+        pszIconPath: ntdef::PWSTR,
+        cchIconPath: win::UINT,
+        piIconIndex: *mut std::os::raw::c_int,
+    ) -> std::os::raw::c_int;
 }

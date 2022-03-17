@@ -75,9 +75,9 @@ pub fn run_wsl(script_path: &Path, args: &[PathBuf], opts: &WSLOptions) -> Resul
 }
 
 struct BashCmdResult {
-    /// Command line for bash
+    /// Command line for bash.
     cmd: WideString,
-    /// Path to temporary file containing the script arguments
+    /// Path to temporary file containing the script arguments.
     tmpfile: Option<PathBuf>,
 }
 
@@ -177,7 +177,7 @@ fn write_args_to_temp_file(args: &[PathBuf]) -> Result<PathBuf, Error> {
 fn create_temp_file() -> Result<PathBuf, Error> {
     use winapi::um::fileapi as fa;
     let mut buf = [0u16; MAX_PATH + 1];
-    let len = unsafe { fa::GetTempPathW(buf.len() as u32, buf.as_mut_ptr()) };
+    let len = unsafe { fa::GetTempPathW(buf.len() as _, buf.as_mut_ptr()) };
     if len == 0 {
         return Err(last_error());
     }

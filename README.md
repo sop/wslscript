@@ -10,8 +10,8 @@ to pass paths as arguments.
 
 ## Usage
 
-Copy `wslscript.exe` file to a location of your choice.
-This executable is used to invoke WSL, so don't move the file afterwards.
+Copy `wslscript.exe` and `wslscript_handler.dll` to a location of your choice.
+These files are used to invoke WSL, so don't move them afterwards.
 
 Run `wslscript.exe` to open a setup GUI.
 Enter the extension and click _Register_ button to add filetype association
@@ -23,8 +23,6 @@ Other files can be passed as path arguments by dragging and dropping them into
 
 Scripts are executed in the same folder where the script file is located,
 ie. `$PWD` is set to script's directory.
-
-Note that Drag & Drop handler may not work until reboot.
 
 ## TODO
 
