@@ -7,6 +7,7 @@ use widestring::WideChar;
 use winapi::shared::minwindef as win;
 use winapi::um::winver;
 
+/// Get version string from file.
 pub fn product_version(path: &Path) -> Option<String> {
     let filever = FileVersion::try_new(path).ok()?;
     let translations = filever
@@ -32,6 +33,9 @@ struct LANGANDCODEPAGE {
 }
 
 struct FileVersion {
+    /// File version information.
+    ///
+    /// See: https://docs.microsoft.com/en-us/windows/win32/api/winver/nf-winver-getfileversioninfow
     data: Vec<u8>,
 }
 
@@ -53,6 +57,9 @@ impl FileVersion {
         Ok(Self { data })
     }
 
+    /// Query file version value.
+    ///
+    /// See: https://docs.microsoft.com/en-us/windows/win32/api/winver/nf-winver-verqueryvaluew
     pub fn query<T>(&self, sub_block: &str) -> Result<&[T], Error> {
         let mut buf: win::LPVOID = ptr::null_mut();
         let mut len: win::UINT = 0;
