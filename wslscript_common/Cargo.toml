@@ -19,6 +19,7 @@ features = [
     "winuser",
     "winbase",
     "winerror",
+    "winver",
     "errhandlingapi",
     "commctrl",
     "processenv",

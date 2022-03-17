@@ -41,7 +41,14 @@ extern "system" {
 
 /// Start WSL Script GUI app.
 pub fn start_gui() -> Result<(), Error> {
-    let wnd = MainWindow::new(wcstr(wchz!("WSL Script")))?;
+    let mut title = "WSL Script".to_string();
+    if let Ok(p) = std::env::current_exe() {
+        if let Some(version) = wslscript_common::ver::product_version(&p) {
+            title.push_str(" - ");
+            title.push_str(&version);
+        }
+    };
+    let wnd = MainWindow::new(&wcstring(&title))?;
     wnd.run()
 }
 

@@ -5,6 +5,7 @@ pub mod error;
 pub mod font;
 pub mod icon;
 pub mod registry;
+pub mod ver;
 pub mod win32;
 pub mod wsl;
 
