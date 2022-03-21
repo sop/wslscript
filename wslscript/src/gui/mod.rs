@@ -29,14 +29,7 @@ static DEFAULT_EXTENSION: Lazy<WideCString> = Lazy::new(|| wcstring("sh"));
 
 /// Start WSL Script GUI app.
 pub fn start_gui() -> Result<(), Error> {
-    let mut title = "WSL Script".to_string();
-    if let Ok(p) = std::env::current_exe() {
-        if let Some(version) = wslscript_common::ver::product_version(&p) {
-            title.push_str(" - ");
-            title.push_str(&version);
-        }
-    };
-    let wnd = MainWindow::new(&wcstring(&title))?;
+    let wnd = MainWindow::new(wcstr(wchz!("WSL Script")))?;
     wnd.run()
 }
 
@@ -162,6 +155,16 @@ enum MenuItem {
     Unregister = 100,
     /// Edit extension.
     EditExtension,
+}
+
+/// System menu item ID's.
+#[derive(IntoPrimitive, TryFromPrimitive, PartialEq)]
+#[repr(u32)]
+enum SystemMenu {
+    /// About application.
+    About = 100,
+    /// Visit website.
+    Homepage,
 }
 
 /// Minimum and initial main window size.
@@ -537,6 +540,63 @@ impl MainWindow {
         let visibility = if visible { SW_SHOW } else { SW_HIDE };
         unsafe {
             ShowWindow(self.get_control_handle(control), visibility);
+        }
+    }
+
+    /// Add items to system menu.
+    fn extend_system_menu(&self) -> Result<(), Error> {
+        let menu = unsafe { GetSystemMenu(self.hwnd, win::FALSE) };
+        unsafe {
+            AppendMenuW(menu, MF_SEPARATOR, 0, ptr::null());
+            AppendMenuW(
+                menu,
+                MF_ENABLED | MF_STRING,
+                SystemMenu::About as _,
+                wchz!("About WSL Script").as_ptr(),
+            );
+            AppendMenuW(
+                menu,
+                MF_ENABLED | MF_STRING,
+                SystemMenu::Homepage as _,
+                wchz!("Visit website").as_ptr(),
+            );
+        }
+        Ok(())
+    }
+
+    /// Handle WM_SYSCOMMAND message when custom menu item was selected.
+    fn on_system_menu_command(&self, id: SystemMenu) -> win::LRESULT {
+        match id {
+            SystemMenu::About => {
+                let mut text = format!("WSL Script");
+                if let Ok(p) = std::env::current_exe() {
+                    if let Some(version) = wslscript_common::ver::product_version(&p) {
+                        text.push_str(&format!("\nVersion {}", version));
+                    }
+                };
+                unsafe {
+                    MessageBoxW(
+                        self.hwnd,
+                        wcstring(text).as_ptr(),
+                        wchz!("About WSL Script").as_ptr(),
+                        MB_OK | MB_ICONINFORMATION,
+                    );
+                }
+                0
+            }
+            SystemMenu::Homepage => {
+                unsafe {
+                    winapi::um::shellapi::ShellExecuteW(
+                        ptr::null_mut(),
+                        wchz!("open").as_ptr(),
+                        wchz!("https://sop.github.io/wslscript/").as_ptr(),
+                        ptr::null(),
+                        ptr::null(),
+                        SW_SHOWNORMAL,
+                    );
+                }
+                0
+            }
         }
     }
 
@@ -1016,6 +1076,9 @@ impl WindowProc for MainWindow {
                 if self.create_window_controls().is_err() {
                     return Some(-1);
                 }
+                if self.extend_system_menu().is_err() {
+                    log::error!("Failed to extend system menu.");
+                }
                 Some(0)
             }
             WM_SIZE => {
@@ -1058,6 +1121,12 @@ impl WindowProc for MainWindow {
                 let item_id = unsafe { GetMenuItemID(hmenu, wparam as _) };
                 if let Ok(id) = MenuItem::try_from(item_id) {
                     return Some(self.on_menucommand(hmenu, id));
+                }
+                None
+            }
+            WM_SYSCOMMAND => {
+                if let Ok(id) = SystemMenu::try_from(wparam as u32) {
+                    return Some(self.on_system_menu_command(id));
                 }
                 None
             }
