@@ -202,6 +202,7 @@ fn get_module_path(hinstance: win::HINSTANCE) -> Result<PathBuf, Error> {
 
 bitflags::bitflags! {
     /// Key state flags.
+    #[derive(Debug)]
     pub struct KeyState: win::DWORD {
         const MK_CONTROL = winuser::MK_CONTROL as win::DWORD;
         const MK_SHIFT = winuser::MK_SHIFT as win::DWORD;

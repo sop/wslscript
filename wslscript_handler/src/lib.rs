@@ -2,7 +2,7 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::Ordering;
 use std::sync::mpsc;
 use std::thread;
-use widestring::UCStr;
+use widestring::WideCStr;
 use winapi::shared::ntdef;
 use winapi::shared::windef;
 use winapi::shared::winerror;
@@ -248,7 +248,7 @@ fn get_paths_from_data_obj(obj: &objidl::IDataObject) -> Result<Vec<PathBuf>, Er
 fn parse_filename_array_wide(mut ptr: *const ntdef::WCHAR) -> Vec<PathBuf> {
     let mut paths = Vec::<PathBuf>::new();
     loop {
-        let s = unsafe { UCStr::from_ptr_str(ptr) };
+        let s = unsafe { WideCStr::from_ptr_str(ptr) };
         // terminated by double null, so last slice is empty
         if s.is_empty() {
             break;
