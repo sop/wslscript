@@ -2,7 +2,7 @@
 name = "wslscript"
 description = "Shell script handler for WSL."
 version = "0.7.0"
-authors = ["Joni Eskelinen <jonieske@gmail.com>"]
+authors = ["Joni Kollani <joni.kollani@gmail.com>"]
 license = "MIT"
 homepage = "https://sop.github.io/wslscript/"
 repository = "https://github.com/sop/wslscript"

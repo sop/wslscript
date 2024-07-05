@@ -41,7 +41,7 @@ fn main() {
         .set("InternalName", &format!("{}.exe", cargo.package.name))
         .set(
             "LegalCopyright",
-            &format!("Joni Eskelinen © {}", now.format("%Y")),
+            &format!("Joni Kollani © {}", now.format("%Y")),
         )
         .compile()
         .unwrap();

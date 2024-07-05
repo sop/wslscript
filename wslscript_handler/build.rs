@@ -42,7 +42,7 @@ fn main() {
         )
         .set(
             "LegalCopyright",
-            &format!("Joni Eskelinen © {}", now.format("%Y")),
+            &format!("Joni Kollani © {}", now.format("%Y")),
         )
         .compile()
         .unwrap();
