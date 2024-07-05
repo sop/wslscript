@@ -12,12 +12,12 @@ edition = "2021"
 com = { version = "0.6.0", features = ["production"] }
 guid_win = "0.2.0"
 num_enum = "0.7.2"
-once_cell = "1.19.0"
-bitflags = "2.5.0"
-log = { version = "0.4.21", features = ["release_max_level_off"] }
-simple-logging = "2.0.2"
-widestring = "1.0.2"
-wchar = "0.11.0"
+once_cell = "1.19"
+bitflags = "2.6"
+log = { version = "0.4", features = ["release_max_level_off"] }
+simple-logging = "2.0"
+widestring = "1.1"
+wchar = "0.11"
 
 [dependencies.wslscript_common]
 version = "*"
@@ -34,8 +34,8 @@ crate-type = ["cdylib"]
 debug = []
 
 [build-dependencies]
-winres = "0.1.12"
-toml = "0.8.12"
+winres = "0.1"
+toml = "0.8"
 serde = "1"
 serde_derive = "1"
-chrono = "0.4.35"
+chrono = "0.4"
