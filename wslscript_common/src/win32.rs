@@ -80,7 +80,7 @@ pub fn last_error() -> Error {
         unsafe { LocalFree(buf as _) };
         s
     };
-    Error::from(ErrorKind::WinAPIError { s })
+    Error::WinAPIError(s)
 }
 
 /// Path buffer with Windows semantics.

@@ -1,57 +1,52 @@
 use crate::wcstring;
-use std::fmt::{self, Display};
+use thiserror::Error;
 
-#[derive(Debug, Fail)]
-pub enum ErrorKind {
-    #[fail(display = "Path contains invalid UTF-8 characters.")]
+#[derive(Debug, Error)]
+pub enum Error {
+    #[error("Path contains invalid UTF-8 characters.")]
     StringToPathUTF8Error,
 
-    #[fail(display = "Failed to convert Windows path to WSL path.")]
+    #[error("Failed to convert Windows path to WSL path.")]
     WinToUnixPathError,
 
-    #[fail(display = "WSL not found or not installed.")]
+    #[error("WSL not found or not installed.")]
     WSLNotFound,
 
-    #[fail(display = "Failed to start WSL process.")]
+    #[error("Failed to start WSL process.")]
     WSLProcessError,
 
-    #[fail(display = "Invalid path.")]
+    #[error("Invalid path.")]
     InvalidPathError,
 
-    #[fail(display = "Command is too long.")]
+    #[error("Command is too long.")]
     CommandTooLong,
 
-    #[fail(display = "String is not nul terminated.")]
+    #[error("String is not nul terminated.")]
     MissingNulError,
 
-    #[fail(display = "Operation was cancelled.")]
+    #[error("Operation was cancelled.")]
     Cancel,
 
-    #[fail(display = "Registry error: {}", e)]
-    RegistryError { e: std::io::Error },
+    #[error("Registry error: {0}")]
+    RegistryError(std::io::Error),
 
-    #[fail(display = "IO error: {}", e)]
-    IOError { e: std::io::Error },
+    #[error("IO error: {0}")]
+    IOError(std::io::Error),
 
-    #[fail(display = "Dynamic library error: {}", s)]
-    LibraryError { s: String },
+    #[error("Dynamic library error: {0}")]
+    LibraryError(String),
 
-    #[fail(display = "WinAPI error: {}", s)]
-    WinAPIError { s: String },
+    #[error("WinAPI error: {0}")]
+    WinAPIError(String),
 
-    #[fail(display = "Drop handler error: {}", s)]
-    DropHandlerError { s: String },
+    #[error("Drop handler error: {0}")]
+    DropHandlerError(String),
 
-    #[fail(display = "Error: {}", s)]
-    GenericError { s: String },
+    #[error("Error: {0}")]
+    GenericError(String),
 
-    #[fail(display = "Logic error: {}", s)]
-    LogicError { s: &'static str },
-}
-
-#[derive(Debug)]
-pub struct Error {
-    inner: failure::Context<ErrorKind>,
+    #[error("Logic error: {0}")]
+    LogicError(&'static str),
 }
 
 impl Error {
@@ -60,34 +55,21 @@ impl Error {
     }
 }
 
-impl From<ErrorKind> for Error {
-    fn from(kind: ErrorKind) -> Error {
-        Error {
-            inner: failure::Context::new(kind),
-        }
-    }
-}
-
-impl From<failure::Context<ErrorKind>> for Error {
-    fn from(kind: failure::Context<ErrorKind>) -> Error {
-        Error { inner: kind }
+impl From<anyhow::Error> for Error {
+    fn from(e: anyhow::Error) -> Error {
+        e.downcast::<Error>()
+            .unwrap_or_else(|e: anyhow::Error| Error::GenericError(e.to_string()))
     }
 }
 
 impl From<std::io::Error> for Error {
     fn from(e: std::io::Error) -> Error {
-        Error::from(ErrorKind::IOError { e })
+        Error::IOError(e)
     }
 }
 
 impl From<widestring::error::MissingNulTerminator> for Error {
     fn from(_: widestring::error::MissingNulTerminator) -> Error {
-        Error::from(ErrorKind::MissingNulError)
-    }
-}
-
-impl Display for Error {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        Display::fmt(&self.inner, f)
+        Error::MissingNulError
     }
 }

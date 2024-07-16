@@ -196,19 +196,19 @@ impl Distros {
 pub fn register_extension(config: &ExtConfig) -> Result<(), Error> {
     let ext = config.extension.as_str();
     if ext.is_empty() {
-        return Err(Error::from(ErrorKind::LogicError { s: "No extension." }));
+        return Err(Error::LogicError("No extension."));
     }
     register_server()?;
-    let tx = Transaction::new().map_err(|e| ErrorKind::RegistryError { e })?;
+    let tx = Transaction::new().map_err(|e| Error::RegistryError(e))?;
     let base = RegKey::predef(HKEY_CURRENT_USER)
         .open_subkey_transacted_with_flags(CLASSES_SUBKEY, &tx, KEY_ALL_ACCESS)
-        .map_err(|e| ErrorKind::RegistryError { e })?;
+        .map_err(|e| Error::RegistryError(e))?;
     let name = format!("{}.{}", HANDLER_PREFIX, ext);
     // delete previous handler key in a transaction
     // see https://docs.microsoft.com/en-us/windows/win32/api/winreg/nf-winreg-regdeletekeytransactedw#remarks
     if let Ok(key) = base.open_subkey_transacted_with_flags(&name, &tx, KEY_ALL_ACCESS) {
         key.delete_subkey_all("")
-            .map_err(|e| ErrorKind::RegistryError { e })?;
+            .map_err(|e| Error::RegistryError(e))?;
     }
     let cmd = get_command(config)?.to_os_string();
     let icon: Option<OsString> = config
@@ -266,24 +266,24 @@ pub fn register_extension(config: &ExtConfig) -> Result<(), Error> {
     // Software\Classes\.ext\OpenWithProgIds - Add extension to open with list
     let path = format!(r".{}\OpenWithProgIds", ext);
     set_value(&tx, &base, &path, &name, &"")?;
-    tx.commit().map_err(|e| ErrorKind::RegistryError { e })?;
+    tx.commit().map_err(|e| Error::RegistryError(e))?;
     notify_shell_change();
     Ok(())
 }
 
 /// Unregister extension.
 pub fn unregister_extension(ext: &str) -> Result<(), Error> {
-    let tx = Transaction::new().map_err(|e| ErrorKind::RegistryError { e })?;
+    let tx = Transaction::new().map_err(|e| Error::RegistryError(e))?;
     let base = RegKey::predef(HKEY_CURRENT_USER)
         .open_subkey_transacted_with_flags(CLASSES_SUBKEY, &tx, KEY_ALL_ACCESS)
-        .map_err(|e| ErrorKind::RegistryError { e })?;
+        .map_err(|e| Error::RegistryError(e))?;
     let name = format!("{}.{}", HANDLER_PREFIX, ext);
     // delete handler
     if let Ok(key) = base.open_subkey_transacted_with_flags(&name, &tx, KEY_ALL_ACCESS) {
         key.delete_subkey_all("")
-            .map_err(|e| ErrorKind::RegistryError { e })?;
+            .map_err(|e| Error::RegistryError(e))?;
         base.delete_subkey_transacted(&name, &tx)
-            .map_err(|e| ErrorKind::RegistryError { e })?;
+            .map_err(|e| Error::RegistryError(e))?;
     }
     let ext_name = format!(".{}", ext);
     if let Ok(ext_key) = base.open_subkey_transacted_with_flags(&ext_name, &tx, KEY_ALL_ACCESS) {
@@ -293,7 +293,7 @@ pub fn unregister_extension(ext: &str) -> Result<(), Error> {
                 // set default handler to unset
                 ext_key
                     .delete_value("")
-                    .map_err(|e| ErrorKind::RegistryError { e })?;
+                    .map_err(|e| Error::RegistryError(e))?;
             }
         }
         // cleanup OpenWithProgids
@@ -308,14 +308,14 @@ pub fn unregister_extension(ext: &str) -> Result<(), Error> {
             {
                 open_with_key
                     .delete_value(progid)
-                    .map_err(|e| ErrorKind::RegistryError { e })?;
+                    .map_err(|e| Error::RegistryError(e))?;
             }
             // if OpenWithProgids was left empty
             if let Ok(info) = open_with_key.query_info() {
                 if info.sub_keys == 0 && info.values == 0 {
                     ext_key
                         .delete_subkey_transacted(open_with_name, &tx)
-                        .map_err(|e| ErrorKind::RegistryError { e })?;
+                        .map_err(|e| Error::RegistryError(e))?;
                 }
             }
         }
@@ -326,12 +326,12 @@ pub fn unregister_extension(ext: &str) -> Result<(), Error> {
                 if info.sub_keys == 0 {
                     // ... remove extension key altogether
                     base.delete_subkey_transacted(&ext_name, &tx)
-                        .map_err(|e| ErrorKind::RegistryError { e })?;
+                        .map_err(|e| Error::RegistryError(e))?;
                 }
             }
         }
     }
-    tx.commit().map_err(|e| ErrorKind::RegistryError { e })?;
+    tx.commit().map_err(|e| Error::RegistryError(e))?;
     // if there's no registered extensions, unregister shell extension
     if let Ok(exts) = query_registered_extensions() {
         if exts.is_empty() {
@@ -392,7 +392,7 @@ fn set_value<T: winreg::types::ToRegValue>(
 ) -> Result<(), Error> {
     base.create_subkey_transacted(path, tx)
         .and_then(|(key, _)| key.set_value(name, value))
-        .map_err(|e| Error::from(ErrorKind::RegistryError { e }))
+        .map_err(|e| Error::from(Error::RegistryError(e)))
 }
 
 /// Query list of registered extensions.
@@ -401,7 +401,7 @@ fn set_value<T: winreg::types::ToRegValue>(
 pub fn query_registered_extensions() -> Result<Vec<String>, Error> {
     let base = RegKey::predef(HKEY_CURRENT_USER)
         .open_subkey(CLASSES_SUBKEY)
-        .map_err(|e| ErrorKind::RegistryError { e })?;
+        .map_err(|e| Error::RegistryError(e))?;
     let extensions: Vec<String> = base
         .enum_keys()
         .filter_map(Result::ok)
@@ -420,7 +420,7 @@ pub fn query_registered_extensions() -> Result<Vec<String>, Error> {
 pub fn query_distros() -> Result<Distros, Error> {
     let base = RegKey::predef(HKEY_CURRENT_USER)
         .open_subkey(LXSS_SUBKEY)
-        .map_err(|e| ErrorKind::RegistryError { e })?;
+        .map_err(|e| Error::RegistryError(e))?;
     let mut distros = Distros::default();
     base.enum_keys().filter_map(Result::ok).for_each(|s| {
         if let Ok(name) = base
@@ -458,7 +458,7 @@ pub fn get_extension_config(ext: &str) -> Result<ExtConfig, Error> {
     let handler_key = RegKey::predef(HKEY_CURRENT_USER)
         .open_subkey(CLASSES_SUBKEY)
         .and_then(|key| key.open_subkey(format!("{}.{}", HANDLER_PREFIX, ext)))
-        .map_err(|e| ErrorKind::RegistryError { e })?;
+        .map_err(|e| Error::RegistryError(e))?;
     let mut icon: Option<ShellIcon> = None;
     if let Ok(key) = handler_key.open_subkey("DefaultIcon") {
         if let Ok(s) = key.get_value::<String, _>("") {
@@ -492,7 +492,7 @@ pub fn get_extension_config(ext: &str) -> Result<ExtConfig, Error> {
 pub fn is_extension_registered_for_wsl(ext: &str) -> Result<bool, Error> {
     RegKey::predef(HKEY_CURRENT_USER)
         .open_subkey(CLASSES_SUBKEY)
-        .map_err(|e| ErrorKind::RegistryError { e })?
+        .map_err(|e| Error::RegistryError(e))?
         // try to open .ext key
         .open_subkey(format!(".{}", ext))
         .and_then(|key| key.get_value::<String, _>(""))
@@ -505,7 +505,7 @@ pub fn is_extension_registered_for_wsl(ext: &str) -> Result<bool, Error> {
 pub fn is_registered_for_other(ext: &str) -> Result<bool, Error> {
     RegKey::predef(HKEY_CURRENT_USER)
         .open_subkey(CLASSES_SUBKEY)
-        .map_err(|e| ErrorKind::RegistryError { e })?
+        .map_err(|e| Error::RegistryError(e))?
         // try to open .ext key
         .open_subkey(format!(".{}", ext))
         .and_then(|key| key.get_value::<String, _>(""))
@@ -520,14 +520,14 @@ pub fn get_handler_executable_path(ext: &str) -> Result<PathBuf, Error> {
         .open_subkey(CLASSES_SUBKEY)
         .and_then(|key| key.open_subkey(format!(r"{}.{}\shell\open\command", HANDLER_PREFIX, ext)))
         .and_then(|key| key.get_value::<String, _>(""))
-        .map_err(|e| Error::from(ErrorKind::RegistryError { e }))
+        .map_err(|e| Error::from(Error::RegistryError(e)))
         .and_then(|cmd| {
             // remove quotes
             cmd.trim_start_matches('"')
                 .split_terminator('"')
                 .next()
                 .map(PathBuf::from)
-                .ok_or_else(|| Error::from(ErrorKind::InvalidPathError))
+                .ok_or_else(|| Error::InvalidPathError)
         })
 }
 
@@ -549,23 +549,17 @@ pub fn is_registered_for_current_executable(ext: &str) -> Result<bool, Error> {
 /// Call DllRegisterServer from shell extension handler library.
 fn register_server() -> Result<(), Error> {
     use libloading::{Library, Symbol};
-    let lib = unsafe { Library::new("wslscript_handler.dll") }.map_err(|e| {
-        Error::from(ErrorKind::LibraryError {
-            s: format!("{}", e),
-        })
-    })?;
+    let lib = unsafe { Library::new("wslscript_handler.dll") }
+        .map_err(|e| Error::LibraryError(format!("{}", e)))?;
     let dll_register_server: Symbol<unsafe extern "C" fn() -> i32> =
-        unsafe { lib.get(b"DllRegisterServer\0") }.map_err(|e| {
-            Error::from(ErrorKind::LibraryError {
-                s: format!("{}", e),
-            })
-        })?;
+        unsafe { lib.get(b"DllRegisterServer\0") }
+            .map_err(|e| Error::LibraryError(format!("{}", e)))?;
     let rv = unsafe { dll_register_server() };
     if rv != winerror::S_OK {
         log::debug!("DllRegisterServer returned {}", rv);
-        return Err(Error::from(ErrorKind::GenericError {
-            s: "Failed to register shell extension.".to_string(),
-        }));
+        return Err(Error::GenericError(
+            "Failed to register shell extension.".to_string(),
+        ));
     }
     Ok(())
 }
@@ -574,33 +568,33 @@ fn register_server() -> Result<(), Error> {
 ///
 /// See: https://docs.microsoft.com/en-us/windows/win32/com/inprocserver32
 pub fn add_server_to_registry(dll_path: &Path) -> Result<(), Error> {
-    let tx = Transaction::new().map_err(|e| ErrorKind::RegistryError { e })?;
+    let tx = Transaction::new().map_err(|e| Error::RegistryError(e))?;
     let base = RegKey::predef(HKEY_CURRENT_USER)
         .open_subkey_transacted_with_flags(CLASSES_SUBKEY, &tx, KEY_ALL_ACCESS)
-        .map_err(|e| ErrorKind::RegistryError { e })?;
+        .map_err(|e| Error::RegistryError(e))?;
     let clsid = format!(r"CLSID\{}", DROP_HANDLER_CLSID.to_string());
     set_value(&tx, &base, &clsid, "", &"WSLScript Drop Handler")?;
     let path = format!(r"{}\InProcServer32", clsid);
     let val = dll_path.to_string_lossy().to_string();
     set_value(&tx, &base, &path, "", &val)?;
     set_value(&tx, &base, &path, "ThreadingModel", &"Apartment")?;
-    tx.commit().map_err(|e| ErrorKind::RegistryError { e })?;
+    tx.commit().map_err(|e| Error::RegistryError(e))?;
     Ok(())
 }
 
 /// Remove registry keys related to drop handler shell extension.
 pub fn remove_server_from_registry() -> Result<(), Error> {
-    let tx = Transaction::new().map_err(|e| ErrorKind::RegistryError { e })?;
+    let tx = Transaction::new().map_err(|e| Error::RegistryError(e))?;
     let base = RegKey::predef(HKEY_CURRENT_USER)
         .open_subkey_transacted_with_flags(CLASSES_SUBKEY, &tx, KEY_ALL_ACCESS)
-        .map_err(|e| ErrorKind::RegistryError { e })?;
+        .map_err(|e| Error::RegistryError(e))?;
     let clsid = format!(r"CLSID\{}", DROP_HANDLER_CLSID.to_string());
     if let Ok(key) = base.open_subkey_transacted_with_flags(&clsid, &tx, KEY_ALL_ACCESS) {
         key.delete_subkey_all("")
-            .map_err(|e| ErrorKind::RegistryError { e })?;
+            .map_err(|e| Error::RegistryError(e))?;
         base.delete_subkey_transacted(&clsid, &tx)
-            .map_err(|e| ErrorKind::RegistryError { e })?;
+            .map_err(|e| Error::RegistryError(e))?;
     }
-    tx.commit().map_err(|e| ErrorKind::RegistryError { e })?;
+    tx.commit().map_err(|e| Error::RegistryError(e))?;
     Ok(())
 }

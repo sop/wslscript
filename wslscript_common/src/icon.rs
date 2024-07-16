@@ -33,14 +33,12 @@ impl ShellIcon {
             )
         };
         if handle.is_null() {
-            return Err(Error::from(ErrorKind::WinAPIError {
-                s: String::from("No icon found from the file."),
-            }));
+            return Err(Error::WinAPIError(String::from(
+                "No icon found from the file.",
+            )));
         }
         if handle == 1 as _ {
-            return Err(Error::from(ErrorKind::WinAPIError {
-                s: String::from("File not found."),
-            }));
+            return Err(Error::WinAPIError(String::from("File not found.")));
         }
         Ok(Self {
             handle,

@@ -2,7 +2,7 @@ use crate::error::*;
 use crate::registry::{self, HoldMode};
 use crate::wcstring;
 use crate::win32::*;
-use failure::ResultExt;
+use anyhow::Context;
 use std::env;
 use std::ffi::{OsStr, OsString};
 use std::os::windows::ffi::{OsStrExt, OsStringExt};
@@ -35,7 +35,7 @@ pub fn run_wsl(script_path: &Path, args: &[PathBuf], opts: &WSLOptions) -> Resul
         // retry and force to write arguments into temporary file
         bash_cmd = compose_bash_command(script_path, args, opts, true)?;
         if bash_cmd.cmd.len() > MAX_BASH_LEN {
-            return Err(Error::from(ErrorKind::CommandTooLong));
+            return Err(Error::CommandTooLong);
         }
     }
     log::debug!("Bash command: {}", bash_cmd.cmd.to_string_lossy());
@@ -58,7 +58,7 @@ pub fn run_wsl(script_path: &Path, args: &[PathBuf], opts: &WSLOptions) -> Resul
         .stdout(Stdio::null())
         .stderr(Stdio::null())
         .spawn()
-        .context(ErrorKind::WSLProcessError)?;
+        .context(Error::WSLProcessError)?;
     // always wait on debug to spot errors
     #[cfg(feature = "debug")]
     let _ = proc.wait();
@@ -93,9 +93,9 @@ fn compose_bash_command(
 ) -> Result<BashCmdResult, Error> {
     let script_dir = script_path
         .parent()
-        .ok_or(ErrorKind::InvalidPathError)?
+        .ok_or(Error::InvalidPathError)?
         .as_os_str();
-    let script_file = script_path.file_name().ok_or(ErrorKind::InvalidPathError)?;
+    let script_file = script_path.file_name().ok_or(Error::InvalidPathError)?;
     // command line to invoke in WSL
     let mut cmd = WideString::new();
     let tmpfile = if force_args_in_file ||
@@ -153,10 +153,7 @@ fn write_args_to_temp_file(args: &[PathBuf]) -> Result<PathBuf, Error> {
     let temp = create_temp_file()?;
     let paths: Result<Vec<_>, _> = args
         .iter()
-        .map(|p| {
-            p.to_str()
-                .ok_or_else(|| Error::from(ErrorKind::StringToPathUTF8Error))
-        })
+        .map(|p| p.to_str().ok_or_else(|| Error::StringToPathUTF8Error))
         .collect();
     let s = match paths {
         Err(e) => return Err(e),
@@ -215,9 +212,7 @@ fn single_quote_escape(s: &OsStr) -> OsString {
 /// Convert single Windows path to WSL equivalent.
 fn path_to_wsl(path: &Path, opts: &WSLOptions) -> Result<PathBuf, Error> {
     let mut paths = paths_to_wsl(&[path.to_owned()], opts, None)?;
-    let p = paths
-        .pop()
-        .ok_or_else(|| Error::from(ErrorKind::WinToUnixPathError))?;
+    let p = paths.pop().ok_or_else(|| Error::WinToUnixPathError)?;
     Ok(p)
 }
 
@@ -269,13 +264,13 @@ pub fn paths_to_wsl(
             OsStr::new("-c"),
             &printf.to_os_string(),
         ]);
-        let output = cmd.output().context(ErrorKind::WinToUnixPathError)?;
+        let output = cmd.output().context(Error::WinToUnixPathError)?;
         if !output.status.success() {
-            return Err(Error::from(ErrorKind::WinToUnixPathError));
+            return Err(Error::WinToUnixPathError);
         }
         wsl_paths.extend(
             std::str::from_utf8(&output.stdout)
-                .context(ErrorKind::StringToPathUTF8Error)?
+                .context(Error::StringToPathUTF8Error)?
                 .trim()
                 .trim_matches('\0')
                 .split('\0')
@@ -284,7 +279,7 @@ pub fn paths_to_wsl(
         if let Some(cb) = &progress_callback {
             if !cb(path_idx) {
                 log::debug!("Progress callback returned false, cancelling");
-                return Err(Error::from(ErrorKind::Cancel));
+                return Err(Error::Cancel);
             }
         }
     }
@@ -322,7 +317,7 @@ fn wsl_bin_path() -> Result<PathBuf, Error> {
         }
     }
     // no dice
-    Err(Error::from(ErrorKind::WSLNotFound))
+    Err(Error::WSLNotFound)
 }
 
 /// Options for WSL invocation.

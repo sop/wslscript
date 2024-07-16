@@ -72,9 +72,7 @@ impl FileVersion {
             )
         };
         if rv == 0 {
-            return Err(Error::from(ErrorKind::GenericError {
-                s: "Version not found.".to_string(),
-            }));
+            return Err(Error::GenericError("Version not found.".to_string()));
         }
         let s = unsafe { std::slice::from_raw_parts::<T>(buf as _, len as _) };
         Ok(s)

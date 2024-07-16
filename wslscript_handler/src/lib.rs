@@ -43,9 +43,7 @@ fn handle_dropped_files(
     // read paths from data object
     let mut args = get_paths_from_data_obj(data_obj)?;
     if args.is_empty() {
-        return Err(Error::from(ErrorKind::LogicError {
-            s: "No paths received.",
-        }));
+        return Err(Error::LogicError("No paths received."));
     }
     log::debug!("{} paths received", args.len());
     let mut paths = vec![target.clone()];
@@ -176,16 +174,13 @@ fn convert_paths_with_progress(
 /// Get WSL options from registry based on given filename's extension.
 fn get_wsl_options(path: &Path) -> Result<wsl::WSLOptions, Error> {
     path.extension()
-        .ok_or_else(|| {
-            Error::from(ErrorKind::DropHandlerError {
-                s: "No filename extension".to_owned(),
-            })
-        })
+        .ok_or_else(|| Error::DropHandlerError("No filename extension".to_owned()))
         .and_then(|s| {
             wsl::WSLOptions::from_ext(&s.to_string_lossy()).ok_or_else(|| {
-                Error::from(ErrorKind::DropHandlerError {
-                    s: format!("Extension {} not registered.", s.to_string_lossy()),
-                })
+                Error::DropHandlerError(format!(
+                    "Extension {} not registered.",
+                    s.to_string_lossy()
+                ))
             })
         })
 }
@@ -204,24 +199,21 @@ fn get_paths_from_data_obj(obj: &objidl::IDataObject) -> Result<Vec<PathBuf>, Er
     // https://docs.microsoft.com/en-us/windows/win32/api/objidl/nf-objidl-idataobject-getdata
     let rv = unsafe { obj.GetData(&format, &mut medium as *mut _ as *mut _) };
     if rv != winerror::S_OK {
-        return Err(Error::from(ErrorKind::DropHandlerError {
-            s: format!("IDataObject::GetData returned 0x{:X}.", rv),
-        }));
+        return Err(Error::DropHandlerError(format!(
+            "IDataObject::GetData returned 0x{:X}.",
+            rv
+        )));
     }
     if medium.tymed != objidl::TYMED_HGLOBAL {
-        return Err(Error::from(ErrorKind::DropHandlerError {
-            s: format!(
-                "IDataObject::GetData returned unexpected medium type {}.",
-                medium.tymed
-            ),
-        }));
+        return Err(Error::DropHandlerError(format!(
+            "IDataObject::GetData returned unexpected medium type {}.",
+            medium.tymed
+        )));
     }
     let ptr = unsafe { *medium.u.hGlobal() };
     let dropfiles = unsafe { &*(ptr as *const types::DROPFILES) as &types::DROPFILES };
     if dropfiles.fWide == 0 {
-        return Err(Error::from(ErrorKind::DropHandlerError {
-            s: format!("ANSI not supported."),
-        }));
+        return Err(Error::DropHandlerError(format!("ANSI not supported.")));
     }
     // file name array follows the DROPFILES structure
     let farray = unsafe { ptr.cast::<u8>().offset(dropfiles.pFiles as _) };

@@ -9,8 +9,9 @@ repository = "https://github.com/sop/wslscript"
 edition = "2021"
 
 [dependencies]
+thiserror = "1.0"
+anyhow = "1.0"
 once_cell = "1.19"
-failure = "0.1.8"
 widestring = "1.1"
 wchar = "0.11"
 guid_win = "0.2.0"

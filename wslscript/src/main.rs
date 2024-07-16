@@ -87,7 +87,7 @@ fn execute_wsl(args: Vec<OsString>, opts: wsl::WSLOptions) -> Result<(), Error> 
     // ensure not trying to invoke self
     if let Some(exe_os) = env::current_exe().ok().and_then(|p| p.canonicalize().ok()) {
         if paths[0] == exe_os {
-            return Err(Error::from(ErrorKind::InvalidPathError));
+            return Err(Error::InvalidPathError);
         }
     }
     // convert paths to WSL equivalents
