@@ -3,7 +3,6 @@
 //!
 //! See: https://docs.microsoft.com/en-us/windows/win32/shell/handlers#implementing-shell-extension-handlers
 
-use com::sys::HRESULT;
 use guid_win::Guid;
 use once_cell::sync::Lazy;
 use std::cell::RefCell;
@@ -13,13 +12,13 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use widestring::WideCStr;
 use winapi::shared::guiddef;
 use winapi::shared::minwindef as win;
-use winapi::shared::windef;
 use winapi::shared::winerror;
-use winapi::shared::wtypesbase;
-use winapi::um::objidl;
 use winapi::um::oleidl;
 use winapi::um::winnt;
 use winapi::um::winuser;
+use windows::core as wc;
+use windows::core::Interface;
+use windows::Win32::{Foundation, System::Com, System::Ole, System::SystemServices};
 use wslscript_common::error::*;
 
 use crate::progress::ProgressWindow;
@@ -29,8 +28,7 @@ use crate::progress::ProgressWindow;
 /// See: https://docs.microsoft.com/en-us/windows/win32/api/unknwn/nn-unknwn-iclassfactory
 ///
 /// Windows requests this interface via `DllGetClassObject` to further query
-/// relevant COM interfaces. _com-rs_ crate implements IClassFactory automatically
-/// for all interfaces (?), so we don't need to worry about details.
+/// relevant COM interfaces.
 static CLASS_FACTORY_CLSID: Lazy<Guid> =
     Lazy::new(|| Guid::from_str("00000001-0000-0000-c000-000000000046").unwrap());
 
@@ -98,7 +96,7 @@ extern "system" fn DllMain(
 ///
 /// See: https://docs.microsoft.com/en-us/windows/win32/api/combaseapi/nf-combaseapi-dllcanunloadnow
 #[no_mangle]
-extern "system" fn DllCanUnloadNow() -> HRESULT {
+extern "system" fn DllCanUnloadNow() -> winnt::HRESULT {
     let n = THREAD_COUNTER.load(Ordering::SeqCst);
     if n > 0 {
         log::info!("{} WSL threads running, denying DLL unload", n);
@@ -117,7 +115,7 @@ extern "system" fn DllGetClassObject(
     class_id: guiddef::REFCLSID,
     iid: guiddef::REFIID,
     result: *mut win::LPVOID,
-) -> HRESULT {
+) -> winnt::HRESULT {
     let class_guid = guid_from_ref(class_id);
     let interface_guid = guid_from_ref(iid);
     // expect our registered class ID
@@ -126,16 +124,15 @@ extern "system" fn DllGetClassObject(
         if !CLASS_FACTORY_CLSID.eq(&interface_guid) {
             log::warn!("Expected IClassFactory, got {}", interface_guid);
         }
-        use com::production::Class as COMClass;
-        let cls = <Handler as COMClass>::Factory::allocate();
-        let rv = unsafe { cls.QueryInterface(iid as _, result as _) };
+        let cls: Com::IClassFactory = Handler::default().into();
+        let rv = unsafe { cls.query(iid as _, result as _) };
         log::debug!(
             "QueryInterface for {} returned {}, address={:p}",
             interface_guid,
             rv,
             result
         );
-        return rv;
+        return rv.0;
     } else {
         log::warn!("Unsupported class: {}", class_guid);
     }
@@ -146,7 +143,7 @@ extern "system" fn DllGetClassObject(
 ///
 /// See: https://docs.microsoft.com/en-us/windows/win32/api/olectl/nf-olectl-dllregisterserver
 #[no_mangle]
-extern "system" fn DllRegisterServer() -> HRESULT {
+extern "system" fn DllRegisterServer() -> winnt::HRESULT {
     let hinstance = unsafe { DLL_HANDLE };
     let path = match get_module_path(hinstance) {
         Ok(p) => p,
@@ -167,7 +164,7 @@ extern "system" fn DllRegisterServer() -> HRESULT {
 ///
 /// See: https://docs.microsoft.com/en-us/windows/win32/api/olectl/nf-olectl-dllunregisterserver
 #[no_mangle]
-extern "system" fn DllUnregisterServer() -> HRESULT {
+extern "system" fn DllUnregisterServer() -> winnt::HRESULT {
     match wslscript_common::registry::remove_server_from_registry() {
         Ok(_) => (),
         Err(e) => {
@@ -213,216 +210,155 @@ bitflags::bitflags! {
     }
 }
 
-// COM interface declarations.
-//
-// Note that methods must be in exact order!
-//
-// See https://www.magnumdb.com/ for interface GUID's.
-// See https://docs.microsoft.com/en-us/windows/win32/shell/handlers for
-// required interfaces.
-com::interfaces! {
-    // NOTE: class! macro generates IClassFactory interface automatically,
-    // so we must directly inherit from IUnknown.
-    #[uuid("81521ebe-a2d4-450b-9bf8-5c23ed8730d0")]
-    pub unsafe interface IHandler : com::interfaces::IUnknown {}
+#[wc::implement(Com::IClassFactory, Com::IPersistFile, Ole::IDropTarget)]
+#[derive(Default)]
+struct Handler {
+    target: RefCell<PathBuf>,
+}
 
-    #[uuid("0000010b-0000-0000-c000-000000000046")]
-    pub unsafe interface IPersistFile : IPersist {
-        fn IsDirty(&self) -> HRESULT;
-
-        fn Load(
-            &self,
-            pszFileName: wtypesbase::LPCOLESTR,
-            dwMode: win::DWORD,
-        ) -> HRESULT;
-
-        fn Save(
-            &self,
-            pszFileName: wtypesbase::LPCOLESTR,
-            fRemember: win::BOOL,
-        ) -> HRESULT;
-
-        fn SaveCompleted(
-            &self,
-            pszFileName: wtypesbase::LPCOLESTR,
-        ) -> HRESULT;
-
-        fn GetCurFile(
-            &self,
-            ppszFileName: *mut wtypesbase::LPOLESTR,
-        ) -> HRESULT;
+/// IClassFactory interface.
+///
+/// https://learn.microsoft.com/en-us/windows/win32/api/unknwn/nn-unknwn-iclassfactory
+impl Com::IClassFactory_Impl for Handler {
+    /// https://learn.microsoft.com/en-us/windows/win32/api/unknwn/nf-unknwn-iclassfactory-createinstance
+    fn CreateInstance(
+        &self,
+        punkouter: Option<&wc::IUnknown>,
+        riid: *const wc::GUID,
+        ppvobject: *mut *mut ::core::ffi::c_void,
+    ) -> wc::Result<()> {
+        log::debug!("IClassFactory::CreateInstance");
+        if punkouter.is_some() {
+            return Err(wc::Error::from(Foundation::CLASS_E_NOAGGREGATION));
+        }
+        unsafe { *ppvobject = core::ptr::null_mut() };
+        if riid.is_null() {
+            return Err(wc::Error::from(Foundation::E_INVALIDARG));
+        }
+        unsafe { self.cast::<wc::IUnknown>()?.query(riid, ppvobject).ok() }
     }
 
-    #[uuid("0000010c-0000-0000-c000-000000000046")]
-    pub unsafe interface IPersist : com::interfaces::IUnknown {
-        fn GetClassID(
-            &self,
-            pClassID: *mut guiddef::CLSID,
-        ) -> HRESULT;
-    }
-
-    #[uuid("00000122-0000-0000-c000-000000000046")]
-    pub unsafe interface IDropTarget: com::interfaces::IUnknown {
-        fn DragEnter(
-            &self,
-            pDataObj: *const objidl::IDataObject,
-            grfKeyState: win::DWORD,
-            pt: *const windef::POINTL,
-            pdwEffect: *mut win::DWORD,
-        ) -> HRESULT;
-
-        fn DragOver(
-            &self,
-            grfKeyState: win::DWORD,
-            pt: *const windef::POINTL,
-            pdwEffect: *mut win::DWORD,
-        ) -> HRESULT;
-
-        fn DragLeave(&self) -> HRESULT;
-
-        fn Drop(
-            &self,
-            pDataObj: *const objidl::IDataObject,
-            grfKeyState: win::DWORD,
-            pt: *const windef::POINTL,
-            pdwEffect: *mut win::DWORD,
-        ) -> HRESULT;
+    /// https://learn.microsoft.com/en-us/windows/win32/api/unknwn/nf-unknwn-iclassfactory-lockserver
+    fn LockServer(&self, _flock: Foundation::BOOL) -> wc::Result<()> {
+        log::debug!("IClassFactory::LockServer");
+        Err(wc::Error::from(Foundation::E_NOTIMPL))
     }
 }
 
-com::class! {
-    pub class Handler: IHandler, IPersistFile(IPersist), IDropTarget {
-        // File that is receiving the drop.
-        target: RefCell<PathBuf>
+/// IPersist interface.
+///
+/// https://learn.microsoft.com/en-us/windows/win32/api/objidl/nn-objidl-ipersist
+impl Com::IPersist_Impl for Handler {
+    fn GetClassID(&self) -> wc::Result<wc::GUID> {
+        log::debug!("IPersist::GetClassID");
+        let guid = wslscript_common::DROP_HANDLER_CLSID.0;
+        wc::Result::Ok(wc::GUID::from_values(
+            guid.Data1, guid.Data2, guid.Data3, guid.Data4,
+        ))
+    }
+}
+
+/// IPersistFile interface.
+///
+/// https://learn.microsoft.com/en-us/windows/win32/api/objidl/nn-objidl-ipersistfile
+impl Com::IPersistFile_Impl for Handler {
+    fn IsDirty(&self) -> wc::HRESULT {
+        log::debug!("IPersistFile::IsDirty");
+        Foundation::S_FALSE
     }
 
-    impl IHandler for Handler {
-    }
-
-    // See: https://docs.microsoft.com/en-us/windows/win32/api/objidl/nn-objidl-ipersistfile
-    impl IPersistFile for Handler {
-        /// See: https://docs.microsoft.com/en-us/windows/win32/api/objidl/nf-objidl-ipersistfile-isdirty
-        fn IsDirty(&self) -> HRESULT {
-            log::debug!("IPersistFile::IsDirty");
-            winerror::S_FALSE
+    fn Load(&self, pszfilename: &wc::PCWSTR, _dwmode: Com::STGM) -> wc::Result<()> {
+        // path to the file that is being dragged over, ie. the registered script file
+        let filename = unsafe { WideCStr::from_ptr_str(pszfilename.as_ptr()) };
+        let path = PathBuf::from(filename.to_os_string());
+        log::debug!("IPersistFile::Load {}", path.to_string_lossy());
+        if let Ok(mut target) = self.target.try_borrow_mut() {
+            *target = path;
+        } else {
+            return Err(wc::Error::from(Foundation::E_FAIL));
         }
+        Ok(())
+    }
 
-        /// See: https://docs.microsoft.com/en-us/windows/win32/api/objidl/nf-objidl-ipersistfile-load
-        fn Load(
-            &self,
-            pszFileName: wtypesbase::LPCOLESTR,
-            _dwMode: win::DWORD,
-        ) -> HRESULT {
-            // path to the file that is being dragged over, ie. the registered script file
-            let filename = unsafe { WideCStr::from_ptr_str(pszFileName) };
-            let path = PathBuf::from(filename.to_os_string());
-            log::debug!("IPersistFile::Load {}", path.to_string_lossy());
-            if let Ok(mut target) = self.target.try_borrow_mut() {
-                *target = path;
-            } else {
-                return winerror::E_FAIL;
+    fn Save(&self, _pszfilename: &wc::PCWSTR, _fremember: Foundation::BOOL) -> wc::Result<()> {
+        log::debug!("IPersistFile::Save");
+        Err(wc::Error::from(Foundation::S_FALSE))
+    }
+
+    fn SaveCompleted(&self, _pszfilename: &wc::PCWSTR) -> wc::Result<()> {
+        log::debug!("IPersistFile::SaveCompleted");
+        Ok(())
+    }
+
+    fn GetCurFile(&self) -> wc::Result<wc::PWSTR> {
+        // TODO: return target file
+        // https://learn.microsoft.com/en-us/windows/win32/api/objidl/nf-objidl-ipersistfile-getcurfile#remarks
+        log::debug!("IPersistFile::GetCurFile");
+        Err(wc::Error::from(Foundation::E_FAIL))
+    }
+}
+
+/// IDropTarget interface.
+///
+/// https://learn.microsoft.com/en-us/windows/win32/api/oleidl/nn-oleidl-idroptarget
+impl Ole::IDropTarget_Impl for Handler {
+    fn DragEnter(
+        &self,
+        _pdataobj: Option<&Com::IDataObject>,
+        _grfkeystate: SystemServices::MODIFIERKEYS_FLAGS,
+        _pt: &Foundation::POINTL,
+        _pdweffect: *mut Ole::DROPEFFECT,
+    ) -> wc::Result<()> {
+        log::debug!("IDropTarget::DragEnter");
+        Ok(())
+    }
+
+    fn DragOver(
+        &self,
+        grfkeystate: SystemServices::MODIFIERKEYS_FLAGS,
+        _pt: &Foundation::POINTL,
+        _pdweffect: *mut Ole::DROPEFFECT,
+    ) -> wc::Result<()> {
+        log::debug!(
+            "IDropTarget::DragOver {:?}",
+            KeyState::from_bits_truncate(grfkeystate.0)
+        );
+        Ok(())
+    }
+
+    fn DragLeave(&self) -> wc::Result<()> {
+        log::debug!("IDropTarget::DragLeave");
+        Ok(())
+    }
+
+    fn Drop(
+        &self,
+        pdataobj: Option<&Com::IDataObject>,
+        grfkeystate: SystemServices::MODIFIERKEYS_FLAGS,
+        _pt: &Foundation::POINTL,
+        pdweffect: *mut Ole::DROPEFFECT,
+    ) -> wc::Result<()> {
+        log::debug!("IDropTarget::Drop");
+        let target = match self.target.try_borrow() {
+            Ok(t) => t.clone(),
+            Err(_) => return Err(wc::Error::from(Foundation::E_UNEXPECTED)),
+        };
+        let obj = match pdataobj {
+            None => return Err(wc::Error::from(Foundation::E_UNEXPECTED)),
+            Some(o) => unsafe { std::mem::transmute(o.as_raw()) },
+        };
+        let keys = KeyState::from_bits_truncate(grfkeystate.0);
+        match super::handle_dropped_files(&target, obj, keys) {
+            Ok(_) => {
+                unsafe {
+                    *pdweffect = Ole::DROPEFFECT_COPY;
+                }
+                Ok(())
             }
-            winerror::S_OK
-        }
-
-        /// See: https://docs.microsoft.com/en-us/windows/win32/api/objidl/nf-objidl-ipersistfile-save
-        fn Save(
-            &self,
-            _pszFileName: wtypesbase::LPCOLESTR,
-            _fRemember: win::BOOL,
-        ) -> HRESULT {
-            log::debug!("IPersistFile::Save");
-            winerror::S_FALSE
-        }
-
-        /// See: https://docs.microsoft.com/en-us/windows/win32/api/objidl/nf-objidl-ipersistfile-savecompleted
-        fn SaveCompleted(
-            &self,
-            _pszFileName: wtypesbase::LPCOLESTR,
-        ) -> HRESULT {
-            log::debug!("IPersistFile::SaveCompleted");
-            winerror::S_OK
-        }
-
-        /// See: https://docs.microsoft.com/en-us/windows/win32/api/objidl/nf-objidl-ipersistfile-getcurfile
-        fn GetCurFile(
-            &self,
-            _ppszFileName: *mut wtypesbase::LPOLESTR,
-        ) -> HRESULT {
-            log::debug!("IPersistFile::GetCurFile");
-            winerror::E_FAIL
-        }
-    }
-
-    // See: https://docs.microsoft.com/en-us/windows/win32/api/objidl/nn-objidl-ipersist
-    impl IPersist for Handler {
-        /// See: https://docs.microsoft.com/en-us/windows/win32/api/objidl/nf-objidl-ipersist-getclassid
-        fn GetClassID(
-            &self,
-            pClassID: *mut guiddef::CLSID,
-        ) -> HRESULT {
-            log::debug!("IPersist::GetClassID");
-            let guid = wslscript_common::DROP_HANDLER_CLSID.0;
-            unsafe { *pClassID = guid }
-            winerror::S_OK
-        }
-    }
-
-    // See: https://docs.microsoft.com/en-us/windows/win32/api/oleidl/nn-oleidl-idroptarget
-    impl IDropTarget for Handler {
-        /// See: https://docs.microsoft.com/en-us/windows/win32/api/oleidl/nf-oleidl-idroptarget-dragenter
-        fn DragEnter(
-            &self,
-            _pDataObj: *const objidl::IDataObject,
-            _grfKeyState: win::DWORD,
-            _pt: *const windef::POINTL,
-            _pdwEffect: *mut win::DWORD,
-        ) -> HRESULT {
-            log::debug!("IDropTarget::DragEnter");
-            winerror::S_OK
-        }
-
-        /// See: https://docs.microsoft.com/en-us/windows/win32/api/oleidl/nf-oleidl-idroptarget-dragover
-        fn DragOver(
-            &self,
-            _grfKeyState: win::DWORD,
-            _pt: *const windef::POINTL,
-            _pdwEffect: *mut win::DWORD,
-        ) -> HRESULT {
-            log::debug!("IDropTarget::DragOver");
-            log::debug!("Keys {:?}", KeyState::from_bits_truncate(_grfKeyState));
-            winerror::S_OK
-        }
-
-        /// See: https://docs.microsoft.com/en-us/windows/win32/api/oleidl/nf-oleidl-idroptarget-dragleave
-        fn DragLeave(&self) -> HRESULT {
-            log::debug!("IDropTarget::DragLeave");
-            winerror::S_OK
-        }
-
-        /// See: https://docs.microsoft.com/en-us/windows/win32/api/oleidl/nf-oleidl-idroptarget-drop
-        fn Drop(
-            &self,
-            pDataObj: *const objidl::IDataObject,
-            grfKeyState: win::DWORD,
-            _pt: *const windef::POINTL,
-            pdwEffect: *mut win::DWORD,
-        ) -> HRESULT {
-            log::debug!("IDropTarget::Drop");
-            let target = if let Ok(target) = self.target.try_borrow() {
-                target.clone()
-            } else {
-                return winerror::E_UNEXPECTED;
-            };
-            let obj = unsafe { &*pDataObj };
-            let keys = KeyState::from_bits_truncate(grfKeyState);
-            super::handle_dropped_files(&target, obj, keys).and_then(|_| {
-                unsafe { *pdwEffect = oleidl::DROPEFFECT_COPY; }
-                Ok(winerror::S_OK)
-            }).unwrap_or_else(|e| {
+            Err(e) => {
                 log::debug!("Drop failed: {}", e);
-                winerror::E_UNEXPECTED
-            })
+                Err(wc::Error::from(Foundation::E_UNEXPECTED))
+            }
         }
     }
 }
