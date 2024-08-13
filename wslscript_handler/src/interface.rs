@@ -233,7 +233,7 @@ impl Com::IClassFactory_Impl for Handler {
         if punkouter.is_some() {
             return Err(wc::Error::from(Foundation::CLASS_E_NOAGGREGATION));
         }
-        unsafe { *ppvobject = core::ptr::null_mut() };
+        unsafe { *ppvobject = ::core::ptr::null_mut() };
         if riid.is_null() {
             return Err(wc::Error::from(Foundation::E_INVALIDARG));
         }
