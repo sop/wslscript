@@ -9,6 +9,7 @@ use std::cell::RefCell;
 use std::path::PathBuf;
 use std::str::FromStr;
 use std::sync::atomic::{AtomicUsize, Ordering};
+use wchar::wchar_t;
 use widestring::WideCStr;
 use winapi::shared::guiddef;
 use winapi::shared::minwindef as win;
@@ -18,6 +19,7 @@ use winapi::um::winnt;
 use winapi::um::winuser;
 use windows::core as wc;
 use windows::core::Interface;
+use windows::Win32::UI::Shell;
 use windows::Win32::{Foundation, System::Com, System::Ole, System::SystemServices};
 use wslscript_common::error::*;
 
@@ -201,12 +203,12 @@ bitflags::bitflags! {
     /// Key state flags.
     #[derive(Debug)]
     pub struct KeyState: win::DWORD {
-        const MK_CONTROL = winuser::MK_CONTROL as win::DWORD;
-        const MK_SHIFT = winuser::MK_SHIFT as win::DWORD;
-        const MK_ALT = oleidl::MK_ALT as win::DWORD;
-        const MK_LBUTTON = winuser::MK_LBUTTON as win::DWORD;
-        const MK_MBUTTON = winuser::MK_MBUTTON as win::DWORD;
-        const MK_RBUTTON = winuser::MK_RBUTTON as win::DWORD;
+        const MK_CONTROL = winuser::MK_CONTROL as _;
+        const MK_SHIFT = winuser::MK_SHIFT as _;
+        const MK_ALT = oleidl::MK_ALT;
+        const MK_LBUTTON = winuser::MK_LBUTTON as _;
+        const MK_MBUTTON = winuser::MK_MBUTTON as _;
+        const MK_RBUTTON = winuser::MK_RBUTTON as _;
     }
 }
 
@@ -249,6 +251,7 @@ impl Com::IClassFactory_Impl for Handler {
 ///
 /// https://learn.microsoft.com/en-us/windows/win32/api/objidl/nn-objidl-ipersist
 impl Com::IPersist_Impl for Handler {
+    /// https://learn.microsoft.com/en-us/windows/win32/api/objidl/nf-objidl-ipersist-getclassid
     fn GetClassID(&self) -> wc::Result<wc::GUID> {
         log::debug!("IPersist::GetClassID");
         let guid = wslscript_common::DROP_HANDLER_CLSID.0;
@@ -262,11 +265,13 @@ impl Com::IPersist_Impl for Handler {
 ///
 /// https://learn.microsoft.com/en-us/windows/win32/api/objidl/nn-objidl-ipersistfile
 impl Com::IPersistFile_Impl for Handler {
+    /// https://learn.microsoft.com/en-us/windows/win32/api/objidl/nf-objidl-ipersistfile-isdirty
     fn IsDirty(&self) -> wc::HRESULT {
         log::debug!("IPersistFile::IsDirty");
         Foundation::S_FALSE
     }
 
+    /// https://learn.microsoft.com/en-us/windows/win32/api/objidl/nf-objidl-ipersistfile-load
     fn Load(&self, pszfilename: &wc::PCWSTR, _dwmode: Com::STGM) -> wc::Result<()> {
         // path to the file that is being dragged over, ie. the registered script file
         let filename = unsafe { WideCStr::from_ptr_str(pszfilename.as_ptr()) };
@@ -280,16 +285,19 @@ impl Com::IPersistFile_Impl for Handler {
         Ok(())
     }
 
+    /// https://learn.microsoft.com/en-us/windows/win32/api/objidl/nf-objidl-ipersistfile-save
     fn Save(&self, _pszfilename: &wc::PCWSTR, _fremember: Foundation::BOOL) -> wc::Result<()> {
         log::debug!("IPersistFile::Save");
         Err(wc::Error::from(Foundation::S_FALSE))
     }
 
+    /// https://learn.microsoft.com/en-us/windows/win32/api/objidl/nf-objidl-ipersistfile-savecompleted
     fn SaveCompleted(&self, _pszfilename: &wc::PCWSTR) -> wc::Result<()> {
         log::debug!("IPersistFile::SaveCompleted");
         Ok(())
     }
 
+    /// https://learn.microsoft.com/en-us/windows/win32/api/objidl/nf-objidl-ipersistfile-getcurfile
     fn GetCurFile(&self) -> wc::Result<wc::PWSTR> {
         // TODO: return target file
         // https://learn.microsoft.com/en-us/windows/win32/api/objidl/nf-objidl-ipersistfile-getcurfile#remarks
@@ -302,6 +310,7 @@ impl Com::IPersistFile_Impl for Handler {
 ///
 /// https://learn.microsoft.com/en-us/windows/win32/api/oleidl/nn-oleidl-idroptarget
 impl Ole::IDropTarget_Impl for Handler {
+    /// https://learn.microsoft.com/en-us/windows/win32/api/oleidl/nf-oleidl-idroptarget-dragenter
     fn DragEnter(
         &self,
         _pdataobj: Option<&Com::IDataObject>,
@@ -313,6 +322,7 @@ impl Ole::IDropTarget_Impl for Handler {
         Ok(())
     }
 
+    /// https://learn.microsoft.com/en-us/windows/win32/api/oleidl/nf-oleidl-idroptarget-dragover
     fn DragOver(
         &self,
         grfkeystate: SystemServices::MODIFIERKEYS_FLAGS,
@@ -326,11 +336,13 @@ impl Ole::IDropTarget_Impl for Handler {
         Ok(())
     }
 
+    /// https://learn.microsoft.com/en-us/windows/win32/api/oleidl/nf-oleidl-idroptarget-dragleave
     fn DragLeave(&self) -> wc::Result<()> {
         log::debug!("IDropTarget::DragLeave");
         Ok(())
     }
 
+    /// https://learn.microsoft.com/en-us/windows/win32/api/oleidl/nf-oleidl-idroptarget-drop
     fn Drop(
         &self,
         pdataobj: Option<&Com::IDataObject>,
@@ -343,22 +355,75 @@ impl Ole::IDropTarget_Impl for Handler {
             Ok(t) => t.clone(),
             Err(_) => return Err(wc::Error::from(Foundation::E_UNEXPECTED)),
         };
-        let obj = match pdataobj {
-            None => return Err(wc::Error::from(Foundation::E_UNEXPECTED)),
-            Some(o) => unsafe { std::mem::transmute(o.as_raw()) },
-        };
+        let obj = pdataobj.ok_or_else(|| wc::Error::from(Foundation::E_UNEXPECTED))?;
+        let paths = get_paths_from_data_obj(obj)?;
         let keys = KeyState::from_bits_truncate(grfkeystate.0);
-        match super::handle_dropped_files(&target, obj, keys) {
-            Ok(_) => {
-                unsafe {
-                    *pdweffect = Ole::DROPEFFECT_COPY;
-                }
+        super::handle_dropped_files(target, paths, keys)
+            .and_then(|_| {
+                unsafe { *pdweffect = Ole::DROPEFFECT_COPY };
                 Ok(())
-            }
-            Err(e) => {
+            })
+            .map_err(|e| {
                 log::debug!("Drop failed: {}", e);
-                Err(wc::Error::from(Foundation::E_UNEXPECTED))
-            }
-        }
+                wc::Error::from(Foundation::E_UNEXPECTED)
+            })
     }
+}
+
+/// Query IDataObject for dropped file names.
+fn get_paths_from_data_obj(obj: &Com::IDataObject) -> wc::Result<Vec<PathBuf>> {
+    // https://learn.microsoft.com/en-us/windows/win32/api/objidl/ns-objidl-formatetc
+    let format = Com::FORMATETC {
+        // https://docs.microsoft.com/en-us/windows/win32/shell/clipboard#cf_hdrop
+        cfFormat: Ole::CF_HDROP.0,
+        ptd: std::ptr::null_mut(),
+        dwAspect: Com::DVASPECT_CONTENT.0,
+        lindex: -1,
+        tymed: Com::TYMED_HGLOBAL.0 as _,
+    };
+    log::debug!("Calling IDataObject::GetData()");
+    // https://docs.microsoft.com/en-us/windows/win32/api/objidl/nf-objidl-idataobject-getdata
+    let mut medium = unsafe { obj.GetData(&format) }?;
+    // ensure data was transfered via global memory handle
+    if medium.tymed != Com::TYMED_HGLOBAL.0 as _ {
+        return Err(wc::Error::from(Foundation::E_UNEXPECTED));
+    }
+    let ptr = unsafe { medium.u.hGlobal.0 };
+    // https://learn.microsoft.com/en-us/windows/win32/api/shlobj_core/ns-shlobj_core-dropfiles
+    let dropfiles = unsafe { &*(ptr as *const Shell::DROPFILES) };
+    if !dropfiles.fWide.as_bool() {
+        log::warn!("ANSI not supported");
+        return Err(wc::Error::from(Foundation::E_UNEXPECTED));
+    }
+    // file name array follows the DROPFILES structure
+    let farray = unsafe { ptr.cast::<u8>().offset(dropfiles.pFiles as _) };
+    let paths = parse_filename_array_wide(farray as *const wchar_t);
+    if medium.pUnkForRelease.is_some() {
+        log::debug!("Calling IUnknown::Release()");
+        unsafe { std::mem::ManuallyDrop::drop(&mut medium.pUnkForRelease) }
+    } else {
+        log::debug!("No release interface, calling GlobalFree()");
+        let _ = unsafe { Foundation::GlobalFree(medium.u.hGlobal) }.inspect_err(|e| {
+            log::debug!("GlobalFree(): {}", e);
+        });
+    }
+    Ok(paths)
+}
+
+/// Parse file name array to list of paths.
+///
+/// See: https://docs.microsoft.com/en-us/windows/win32/shell/clipboard#cf_hdrop
+fn parse_filename_array_wide(mut ptr: *const wchar_t) -> Vec<PathBuf> {
+    let mut paths = Vec::<PathBuf>::new();
+    loop {
+        let s = unsafe { WideCStr::from_ptr_str(ptr) };
+        // terminated by double null, so last slice is empty
+        if s.is_empty() {
+            break;
+        }
+        // advance pointer
+        ptr = unsafe { ptr.offset(s.len() as isize + 1) };
+        paths.push(PathBuf::from(s.to_os_string()));
+    }
+    paths
 }
