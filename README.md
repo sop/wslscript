@@ -24,6 +24,19 @@ Other files can be passed as path arguments by dragging and dropping them into
 Scripts are executed in the same folder where the script file is located,
 ie. `$PWD` is set to script's directory.
 
+## Tips
+
+### Change the Default User
+
+If scripts run as root, you may wish to [change the default WSL user](https://learn.microsoft.com/en-us/windows/wsl/wsl-config#user-settings).
+
+Add the following to `/etc/wsl.conf` file:
+
+```ini
+[user]
+default = username
+```
+
 ## TODO
 
 -   [ ] Optionally register for all users
