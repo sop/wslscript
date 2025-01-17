@@ -9,9 +9,9 @@ repository = "https://github.com/sop/wslscript"
 edition = "2021"
 
 [dependencies]
-thiserror = "1.0"
+thiserror = "2.0"
 anyhow = "1.0"
-once_cell = "1.19"
+once_cell = "1.20"
 widestring = "1.1"
 wchar = "0.11"
 guid_win = "0.2.0"
@@ -33,7 +33,7 @@ features = [
 ]
 
 [dependencies.winreg]
-version = "0.52"
+version = "0.55"
 features = ["transactions"]
 
 [features]

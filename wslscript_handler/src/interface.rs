@@ -214,6 +214,7 @@ bitflags::bitflags! {
 
 #[wc::implement(Com::IClassFactory, Com::IPersistFile, Ole::IDropTarget)]
 #[derive(Default)]
+#[allow(non_camel_case_types)]
 struct Handler {
     target: RefCell<PathBuf>,
 }
