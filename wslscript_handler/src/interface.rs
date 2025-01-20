@@ -222,11 +222,11 @@ struct Handler {
 /// IClassFactory interface.
 ///
 /// https://learn.microsoft.com/en-us/windows/win32/api/unknwn/nn-unknwn-iclassfactory
-impl Com::IClassFactory_Impl for Handler {
+impl Com::IClassFactory_Impl for Handler_Impl {
     /// https://learn.microsoft.com/en-us/windows/win32/api/unknwn/nf-unknwn-iclassfactory-createinstance
     fn CreateInstance(
         &self,
-        punkouter: Option<&wc::IUnknown>,
+        punkouter: wc::Ref<wc::IUnknown>,
         riid: *const wc::GUID,
         ppvobject: *mut *mut ::core::ffi::c_void,
     ) -> wc::Result<()> {
@@ -251,7 +251,7 @@ impl Com::IClassFactory_Impl for Handler {
 /// IPersist interface.
 ///
 /// https://learn.microsoft.com/en-us/windows/win32/api/objidl/nn-objidl-ipersist
-impl Com::IPersist_Impl for Handler {
+impl Com::IPersist_Impl for Handler_Impl {
     /// https://learn.microsoft.com/en-us/windows/win32/api/objidl/nf-objidl-ipersist-getclassid
     fn GetClassID(&self) -> wc::Result<wc::GUID> {
         log::debug!("IPersist::GetClassID");
@@ -265,7 +265,7 @@ impl Com::IPersist_Impl for Handler {
 /// IPersistFile interface.
 ///
 /// https://learn.microsoft.com/en-us/windows/win32/api/objidl/nn-objidl-ipersistfile
-impl Com::IPersistFile_Impl for Handler {
+impl Com::IPersistFile_Impl for Handler_Impl {
     /// https://learn.microsoft.com/en-us/windows/win32/api/objidl/nf-objidl-ipersistfile-isdirty
     fn IsDirty(&self) -> wc::HRESULT {
         log::debug!("IPersistFile::IsDirty");
@@ -310,11 +310,11 @@ impl Com::IPersistFile_Impl for Handler {
 /// IDropTarget interface.
 ///
 /// https://learn.microsoft.com/en-us/windows/win32/api/oleidl/nn-oleidl-idroptarget
-impl Ole::IDropTarget_Impl for Handler {
+impl Ole::IDropTarget_Impl for Handler_Impl {
     /// https://learn.microsoft.com/en-us/windows/win32/api/oleidl/nf-oleidl-idroptarget-dragenter
     fn DragEnter(
         &self,
-        _pdataobj: Option<&Com::IDataObject>,
+        _pdataobj: wc::Ref<Com::IDataObject>,
         _grfkeystate: SystemServices::MODIFIERKEYS_FLAGS,
         _pt: &Foundation::POINTL,
         _pdweffect: *mut Ole::DROPEFFECT,
@@ -346,7 +346,7 @@ impl Ole::IDropTarget_Impl for Handler {
     /// https://learn.microsoft.com/en-us/windows/win32/api/oleidl/nf-oleidl-idroptarget-drop
     fn Drop(
         &self,
-        pdataobj: Option<&Com::IDataObject>,
+        pdataobj: wc::Ref<Com::IDataObject>,
         grfkeystate: SystemServices::MODIFIERKEYS_FLAGS,
         _pt: &Foundation::POINTL,
         pdweffect: *mut Ole::DROPEFFECT,
@@ -356,7 +356,9 @@ impl Ole::IDropTarget_Impl for Handler {
             Ok(t) => t.clone(),
             Err(_) => return Err(wc::Error::from(Foundation::E_UNEXPECTED)),
         };
-        let obj = pdataobj.ok_or_else(|| wc::Error::from(Foundation::E_UNEXPECTED))?;
+        let obj = pdataobj
+            .as_ref()
+            .ok_or_else(|| wc::Error::from(Foundation::E_UNEXPECTED))?;
         let paths = get_paths_from_data_obj(obj)?;
         let keys = KeyState::from_bits_truncate(grfkeystate.0);
         super::handle_dropped_files(target, paths, keys)
@@ -404,7 +406,7 @@ fn get_paths_from_data_obj(obj: &Com::IDataObject) -> wc::Result<Vec<PathBuf>> {
         unsafe { std::mem::ManuallyDrop::drop(&mut medium.pUnkForRelease) }
     } else {
         log::debug!("No release interface, calling GlobalFree()");
-        let _ = unsafe { Foundation::GlobalFree(medium.u.hGlobal) }.inspect_err(|e| {
+        let _ = unsafe { Foundation::GlobalFree(Some(medium.u.hGlobal)) }.inspect_err(|e| {
             log::debug!("GlobalFree(): {}", e);
         });
     }

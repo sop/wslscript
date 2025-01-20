@@ -27,9 +27,8 @@ version = "0.3.9"
 features = ["unknwnbase", "winerror", "winuser", "oleidl"]
 
 [dependencies.windows]
-version = "0.54"
+version = "0.59"
 features = [
-    "implement",
     "Win32_System_Com",
     "Win32_System_Com_StructuredStorage",
     "Win32_System_Ole",
@@ -37,6 +36,9 @@ features = [
     "Win32_Graphics_Gdi",
     "Win32_UI_Shell",
 ]
+
+[dependencies.windows-core]
+version = "0.59"
 
 [lib]
 crate-type = ["cdylib"]
