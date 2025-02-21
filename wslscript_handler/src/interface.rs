@@ -314,12 +314,30 @@ impl Ole::IDropTarget_Impl for Handler_Impl {
     /// https://learn.microsoft.com/en-us/windows/win32/api/oleidl/nf-oleidl-idroptarget-dragenter
     fn DragEnter(
         &self,
-        _pdataobj: wc::Ref<Com::IDataObject>,
+        pdataobj: wc::Ref<Com::IDataObject>,
         _grfkeystate: SystemServices::MODIFIERKEYS_FLAGS,
         _pt: &Foundation::POINTL,
-        _pdweffect: *mut Ole::DROPEFFECT,
+        pdweffect: *mut Ole::DROPEFFECT,
     ) -> wc::Result<()> {
         log::debug!("IDropTarget::DragEnter");
+        let obj = pdataobj
+            .as_ref()
+            .ok_or_else(|| wc::Error::from(Foundation::E_UNEXPECTED))?;
+        let format = Com::FORMATETC {
+            cfFormat: Ole::CF_HDROP.0,
+            ptd: std::ptr::null_mut(),
+            dwAspect: Com::DVASPECT_CONTENT.0,
+            lindex: -1,
+            tymed: Com::TYMED_HGLOBAL.0 as _,
+        };
+        let result = unsafe { obj.QueryGetData(&format) };
+        log::debug!("IDataObject::QueryGetData returned {}", result);
+        let effect = if result != Foundation::S_OK {
+            Ole::DROPEFFECT_NONE
+        } else {
+            Ole::DROPEFFECT_COPY
+        };
+        unsafe { *pdweffect = effect };
         Ok(())
     }
 
@@ -384,6 +402,13 @@ fn get_paths_from_data_obj(obj: &Com::IDataObject) -> wc::Result<Vec<PathBuf>> {
         lindex: -1,
         tymed: Com::TYMED_HGLOBAL.0 as _,
     };
+    log::debug!("Calling IDataObject::QueryGetData()");
+    // https://learn.microsoft.com/en-us/windows/win32/api/objidl/nf-objidl-idataobject-querygetdata
+    let result = unsafe { obj.QueryGetData(&format) };
+    if result != Foundation::S_OK {
+        log::debug!("IDataObject::QueryGetData returned {}", result);
+        return Err(wc::Error::from(result));
+    }
     log::debug!("Calling IDataObject::GetData()");
     // https://docs.microsoft.com/en-us/windows/win32/api/objidl/nf-objidl-idataobject-getdata
     let mut medium = unsafe { obj.GetData(&format) }?;
