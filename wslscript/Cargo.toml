@@ -1,7 +1,7 @@
 [package]
 name = "wslscript"
 description = "Shell script handler for WSL."
-version = "0.7.1"
+version = "0.7.2"
 authors = ["Joni Kollani <joni.kollani@gmail.com>"]
 license = "MIT"
 homepage = "https://sop.github.io/wslscript/"
