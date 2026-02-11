@@ -1195,7 +1195,7 @@ extern "system" fn extension_input_proc(
     unsafe { commctrl::DefSubclassProc(hwnd, msg, wparam, lparam) }
 }
 
-extern "system" {
+unsafe extern "system" {
     /// https://docs.microsoft.com/en-us/windows/win32/api/shlobj_core/nf-shlobj_core-pickicondlg
     pub fn PickIconDlg(
         hwnd: windef::HWND,

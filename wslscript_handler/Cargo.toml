@@ -6,14 +6,14 @@ authors = ["Joni Kollani <joni.kollani@gmail.com>"]
 license = "MIT"
 homepage = "https://sop.github.io/wslscript/"
 repository = "https://github.com/sop/wslscript"
-edition = "2021"
+edition = "2024"
 
 [dependencies]
-guid_win = "0.2.0"
-num_enum = "0.7.3"
-once_cell = "1.20"
-bitflags = "2.8"
-widestring = "1.1"
+guid_win = "0.2"
+num_enum = "0.7"
+once_cell = "1.21"
+bitflags = "2.10"
+widestring = "1.2"
 wchar = "0.11"
 log = { version = "0.4", features = ["release_max_level_off"] }
 simple-logging = "2.0"
@@ -27,7 +27,7 @@ version = "0.3.9"
 features = ["unknwnbase", "winerror", "winuser", "oleidl"]
 
 [dependencies.windows]
-version = "0.59"
+version = "0.62"
 features = [
     "Win32_System_Com",
     "Win32_System_Com_StructuredStorage",
@@ -38,7 +38,7 @@ features = [
 ]
 
 [dependencies.windows-core]
-version = "0.59"
+version = "0.62"
 
 [lib]
 crate-type = ["cdylib"]
@@ -48,7 +48,7 @@ debug = []
 
 [build-dependencies]
 winres = "0.1"
-toml = "0.8"
+toml = "0.9"
 serde = "1"
 serde_derive = "1"
 chrono = "0.4"

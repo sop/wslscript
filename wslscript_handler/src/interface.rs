@@ -17,10 +17,12 @@ use winapi::shared::winerror;
 use winapi::um::oleidl;
 use winapi::um::winnt;
 use winapi::um::winuser;
+use windows::Win32::{
+    Foundation,
+    System::{Com, Ole, SystemServices},
+    UI::Shell,
+};
 use windows::core as wc;
-use windows::core::Interface;
-use windows::Win32::UI::Shell;
-use windows::Win32::{Foundation, System::Com, System::Ole, System::SystemServices};
 use wslscript_common::error::*;
 
 use crate::progress::ProgressWindow;
@@ -45,7 +47,7 @@ static mut DLL_HANDLE: win::HINSTANCE = std::ptr::null_mut();
 /// DLL module entry point.
 ///
 /// See: https://docs.microsoft.com/en-us/windows/win32/dlls/dllmain
-#[no_mangle]
+#[unsafe(no_mangle)]
 extern "system" fn DllMain(
     hinstance: win::HINSTANCE,
     reason: win::DWORD,
@@ -97,7 +99,7 @@ extern "system" fn DllMain(
 /// Called to check whether DLL can be unloaded from memory.
 ///
 /// See: https://docs.microsoft.com/en-us/windows/win32/api/combaseapi/nf-combaseapi-dllcanunloadnow
-#[no_mangle]
+#[unsafe(no_mangle)]
 extern "system" fn DllCanUnloadNow() -> winnt::HRESULT {
     let n = THREAD_COUNTER.load(Ordering::SeqCst);
     if n > 0 {
@@ -112,7 +114,7 @@ extern "system" fn DllCanUnloadNow() -> winnt::HRESULT {
 /// Exposes class factory.
 ///
 /// See: https://docs.microsoft.com/en-us/windows/win32/api/combaseapi/nf-combaseapi-dllgetclassobject
-#[no_mangle]
+#[unsafe(no_mangle)]
 extern "system" fn DllGetClassObject(
     class_id: guiddef::REFCLSID,
     iid: guiddef::REFIID,
@@ -127,7 +129,10 @@ extern "system" fn DllGetClassObject(
             log::warn!("Expected IClassFactory, got {}", interface_guid);
         }
         let cls: Com::IClassFactory = Handler::default().into();
-        let rv = unsafe { cls.query(iid as _, result as _) };
+        let rv = unsafe {
+            use windows::core::Interface;
+            cls.query(iid as _, result as _)
+        };
         log::debug!(
             "QueryInterface for {} returned {}, address={:p}",
             interface_guid,
@@ -144,7 +149,7 @@ extern "system" fn DllGetClassObject(
 /// Add in-process server keys into registry.
 ///
 /// See: https://docs.microsoft.com/en-us/windows/win32/api/olectl/nf-olectl-dllregisterserver
-#[no_mangle]
+#[unsafe(no_mangle)]
 extern "system" fn DllRegisterServer() -> winnt::HRESULT {
     let hinstance = unsafe { DLL_HANDLE };
     let path = match get_module_path(hinstance) {
@@ -165,7 +170,7 @@ extern "system" fn DllRegisterServer() -> winnt::HRESULT {
 /// Remove in-process server keys from registry.
 ///
 /// See: https://docs.microsoft.com/en-us/windows/win32/api/olectl/nf-olectl-dllunregisterserver
-#[no_mangle]
+#[unsafe(no_mangle)]
 extern "system" fn DllUnregisterServer() -> winnt::HRESULT {
     match wslscript_common::registry::remove_server_from_registry() {
         Ok(_) => (),
@@ -238,11 +243,16 @@ impl Com::IClassFactory_Impl for Handler_Impl {
         if riid.is_null() {
             return Err(wc::Error::from(Foundation::E_INVALIDARG));
         }
-        unsafe { self.cast::<wc::IUnknown>()?.query(riid, ppvobject).ok() }
+        unsafe {
+            use windows::core::*;
+            self.as_interface::<wc::IUnknown>()
+                .query(riid, ppvobject)
+                .ok()
+        }
     }
 
     /// https://learn.microsoft.com/en-us/windows/win32/api/unknwn/nf-unknwn-iclassfactory-lockserver
-    fn LockServer(&self, _flock: Foundation::BOOL) -> wc::Result<()> {
+    fn LockServer(&self, _flock: wc::BOOL) -> wc::Result<()> {
         log::debug!("IClassFactory::LockServer");
         Err(wc::Error::from(Foundation::E_NOTIMPL))
     }
@@ -287,7 +297,7 @@ impl Com::IPersistFile_Impl for Handler_Impl {
     }
 
     /// https://learn.microsoft.com/en-us/windows/win32/api/objidl/nf-objidl-ipersistfile-save
-    fn Save(&self, _pszfilename: &wc::PCWSTR, _fremember: Foundation::BOOL) -> wc::Result<()> {
+    fn Save(&self, _pszfilename: &wc::PCWSTR, _fremember: wc::BOOL) -> wc::Result<()> {
         log::debug!("IPersistFile::Save");
         Err(wc::Error::from(Foundation::S_FALSE))
     }

@@ -6,12 +6,12 @@ authors = ["Joni Kollani <joni.kollani@gmail.com>"]
 license = "MIT"
 homepage = "https://sop.github.io/wslscript/"
 repository = "https://github.com/sop/wslscript"
-edition = "2021"
+edition = "2024"
 
 [dependencies]
-num_enum = "0.7.3"
-once_cell = "1.20"
-widestring = "1.1"
+num_enum = "0.7"
+once_cell = "1.21"
+widestring = "1.2"
 wchar = "0.11"
 log = { version = "0.4", features = ["release_max_level_off"] }
 simple-logging = "2.0"
@@ -29,7 +29,7 @@ debug = []
 
 [build-dependencies]
 winres = "0.1"
-toml = "0.8"
+toml = "0.9"
 serde = "1"
 serde_derive = "1"
 chrono = "0.4"

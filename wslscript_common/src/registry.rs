@@ -13,9 +13,9 @@ use widestring::*;
 use winapi::shared::minwindef;
 use winapi::shared::winerror;
 use winapi::um::winnt;
+use winreg::RegKey;
 use winreg::enums::*;
 use winreg::transaction::Transaction;
-use winreg::RegKey;
 
 const HANDLER_PREFIX: &str = "wslscript";
 const CLASSES_SUBKEY: &str = r"Software\Classes";
@@ -342,7 +342,7 @@ pub fn unregister_extension(ext: &str) -> Result<(), Error> {
     Ok(())
 }
 
-extern "system" {
+unsafe extern "system" {
     fn SHChangeNotify(
         weventid: winnt::LONG,
         uflags: minwindef::UINT,
